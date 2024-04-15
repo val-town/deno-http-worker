@@ -1,0 +1,35 @@
+{
+  "name": "deno-http-worker",
+  "version": "0.0.0",
+  "description": "",
+  "main": "dist/plugin.js",
+  "types": "./dist/plugin.d.ts",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "tsc --build",
+    "prepare": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/val-town/deno-http-worker.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": "20"
+  },
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/val-town/deno-http-worker/issues"
+  },
+  "homepage": "https://github.com/val-town/deno-http-worker#readme",
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "typescript": "^5.4.5",
+    "vitest": "^1.5.0"
+  },
+  "dependencies": {
+    "got": "^14.2.1"
+  }
+}
