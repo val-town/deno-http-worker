@@ -1,12 +1,5 @@
-import { beforeAll, it, describe, expect } from "vitest";
+import { it, describe, expect } from "vitest";
 import { DenoHTTPWorker } from "./index.js";
-import http2 from "http2-wrapper";
-const {
-  HTTP2_HEADER_PATH,
-  HTTP2_HEADER_METHOD,
-  HTTP2_HEADER_HOST,
-  HTTP2_HEADER_SCHEME,
-} = http2.constants;
 
 describe("DenoHTTPWorker", () => {
   it("json response", async () => {

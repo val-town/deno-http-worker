@@ -4,15 +4,7 @@ import { Readable } from "stream";
 import http2 from "http2-wrapper";
 import got, { Got } from "got";
 
-const {
-  HTTP2_HEADER_PATH,
-  HTTP2_HEADER_METHOD,
-  HTTP2_HEADER_HOST,
-  HTTP2_HEADER_SCHEME,
-  HTTP2_HEADER_STATUS,
-} = http2.constants;
 import { fileURLToPath } from "url";
-import { read } from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -372,14 +364,6 @@ export class DenoHTTPWorker {
       }
     }
 
-    // TODO: remove
-    console.log(
-      "Spawn args:",
-      this._options.denoExecutable,
-      ["run", ...runArgs, this._options.denoBootstrapScriptPath, ...scriptArgs],
-      this._options.spawnOptions
-    );
-
     this._process = spawn(
       this._options.denoExecutable,
       ["run", ...runArgs, this._options.denoBootstrapScriptPath, ...scriptArgs],
@@ -409,15 +393,33 @@ export class DenoHTTPWorker {
               hooks: {
                 beforeRequest: [
                   (options) => {
+                    // Ensure that we use our existing session
                     options.h2session = this._httpSession;
                     options.http2 = true;
+
+                    // We follow got's example here:
+                    // https://github.com/sindresorhus/got/blob/88e623a0d8140e02eef44d784f8d0327118548bc/documentation/examples/h2c.js#L32-L34
+                    // But, this still surfaces a type error for various
+                    // differences between the implementation. Ignoring for now.
+                    //
+                    // @ts-ignore
                     options.request = http2.request;
+
+                    // Ensure the got user-agent string is never present. If a
+                    // value is passed by the user it will override got's
+                    // default value.
                     if (
                       options.headers["user-agent"] ===
                       "got (https://github.com/sindresorhus/got)"
                     ) {
                       delete options.headers["user-agent"];
                     }
+
+                    // Got will block requests that have a scheme of https and
+                    // will also add a :443 port when not port exists. We pass
+                    // the parts of the url that we care about in headers so
+                    // that we can successfully assemble the request on the
+                    // other side.
                     if (typeof options.url === "string") {
                       options.url = new URL(options.url);
                     }
@@ -430,7 +432,6 @@ export class DenoHTTPWorker {
                     if (options.url && options.url?.protocol === "https:") {
                       options.url.protocol = "http:";
                     }
-                    console.log("OPTIONS", options.url);
                   },
                 ],
               },
@@ -511,7 +512,7 @@ function killUnix(pid: number) {
   try {
     const signal = "SIGKILL";
     process.kill(pid, signal);
-  } catch (e) {
+  } catch (e: any) {
     // Allow this call to fail with
     // ESRCH, which meant that the process
     // to be killed was already dead.
@@ -520,17 +521,4 @@ function killUnix(pid: number) {
       throw e;
     }
   }
-}
-
-function extractHeader(val: string | string[] | undefined): string {
-  if (typeof val === "string") {
-    return val;
-  }
-  if (val === undefined) {
-    return "";
-  }
-  if (val.length == 0) {
-    return "";
-  }
-  return val[val.length - 1]!;
 }
