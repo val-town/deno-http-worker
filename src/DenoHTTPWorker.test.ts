@@ -12,15 +12,23 @@ describe("DenoHTTPWorker", () => {
   it("json response", async () => {
     let worker = new DenoHTTPWorker(`
         export default async function (req: Request): Promise<Response> {
-          return Response.json({ ok: true })
+          let headers = {};
+          for (let [key, value] of req.headers.entries()) {
+            headers[key] = value;
+          }
+          return Response.json({ ok: req.url, headers: headers })
         }
       `);
 
-    let resp = await worker.fetch("https://localhost:8080/");
-    expect(await resp.json()).toEqual({ ok: true });
-    resp = await worker.fetch("https://localhost:8080/");
-    expect(await resp.json()).toEqual({ ok: true });
-
+    let got = await worker.getClient();
+    let json = await got.get("https://localhost/", { headers: {} }).json();
+    expect(json).toEqual({
+      ok: "https://localhost/",
+      headers: {
+        accept: "application/json",
+        "accept-encoding": "gzip, deflate, br",
+      },
+    });
     worker.terminate();
   });
   it("post with body", async () => {
@@ -32,9 +40,11 @@ describe("DenoHTTPWorker", () => {
         }
       `);
 
-    let resp = await worker.fetch("https://localhost:8080/", {
-      method: "POST",
+    let got = await worker.getClient();
+
+    let resp = got("https://localhost:8080/", {
       body: "hello",
+      method: "POST",
     });
     expect(await resp.json()).toEqual({ length: 5 });
 

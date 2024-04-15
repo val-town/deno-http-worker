@@ -12,10 +12,14 @@ Deno.serve(
     },
   },
   async (req) => {
-    console.log(req.url, req);
-    if (req.headers.get("X-Deno-VM-RPC")) {
-      return Response.json({ fromRPC: true });
-    }
+    let url = new URL(req.url);
+    url.host = req.headers.get("X-Deno-Worker-Host");
+    url.protocol = req.headers.get("X-Deno-Worker-Protocol") + ":";
+    url.port = req.headers.get("X-Deno-Worker-Port");
+    req = new Request(url.toString(), req);
+    req.headers.delete("X-Deno-Worker-Host");
+    req.headers.delete("X-Deno-Worker-Protocol");
+    req.headers.delete("X-Deno-Worker-Port");
     return handler.default(req);
   }
 );

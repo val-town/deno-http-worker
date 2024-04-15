@@ -1,7 +1,9 @@
 import path, { resolve } from "path";
 import { ChildProcess, spawn, SpawnOptions, execSync } from "child_process";
 import { Readable } from "stream";
-import http2 from "http2";
+import http2 from "http2-wrapper";
+import got, { Got } from "got";
+
 const {
   HTTP2_HEADER_PATH,
   HTTP2_HEADER_METHOD,
@@ -10,6 +12,7 @@ const {
   HTTP2_HEADER_STATUS,
 } = http2.constants;
 import { fileURLToPath } from "url";
+import { read } from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -246,7 +249,7 @@ export class DenoHTTPWorker {
   private _terminated: Boolean;
   private _ready: Boolean;
   private _pendingSessionRequests: {
-    resolve: (value: http2.ClientHttp2Session) => void;
+    resolve: (value: Got) => void;
   }[];
 
   constructor(script: string | URL, options?: Partial<DenoWorkerOptions>) {
@@ -402,8 +405,38 @@ export class DenoHTTPWorker {
           this._httpSession = http2.connect(`http://localhost:${port}`);
           this._httpSession.on("connect", (err) => {
             this._ready = true;
+            this._got = got.extend({
+              hooks: {
+                beforeRequest: [
+                  (options) => {
+                    options.h2session = this._httpSession;
+                    options.http2 = true;
+                    options.request = http2.request;
+                    if (
+                      options.headers["user-agent"] ===
+                      "got (https://github.com/sindresorhus/got)"
+                    ) {
+                      delete options.headers["user-agent"];
+                    }
+                    if (typeof options.url === "string") {
+                      options.url = new URL(options.url);
+                    }
+                    options.headers = {
+                      ...options.headers,
+                      "X-Deno-Worker-Host": options.url?.host,
+                      "X-Deno-Worker-Port": options.url?.port,
+                      "X-Deno-Worker-Protocol": options.url?.protocol,
+                    };
+                    if (options.url && options.url?.protocol === "https:") {
+                      options.url.protocol = "http:";
+                    }
+                    console.log("OPTIONS", options.url);
+                  },
+                ],
+              },
+            });
             this._pendingSessionRequests.forEach((req) => {
-              req.resolve(this._httpSession!);
+              req.resolve(this._got!);
             });
           });
         }
@@ -418,89 +451,19 @@ export class DenoHTTPWorker {
     }
   }
 
-  async httpSession(): Promise<http2.ClientHttp2Session> {
+  async getClient(): Promise<Got> {
     if (this._ready) {
-      if (this._httpSession == undefined) {
+      if (this._got == undefined) {
         throw new Error(
           "DenoHTTPWorker is ready but the session does not exist"
         );
       }
-      return this._httpSession;
+      return this._got;
     } else {
       return new Promise((resolve) => {
         this._pendingSessionRequests.push({ resolve });
       });
     }
-  }
-  async fetch(
-    resource: string,
-    options?: {
-      body?: string | Buffer | ReadableStream;
-      headers?: { [key: string]: string };
-      method?: string;
-    }
-  ): Promise<Response> {
-    return new Promise(async (resolve, reject) => {
-      let u = new URL(resource);
-      let session = await this.httpSession();
-
-      if (options?.body instanceof ReadableStream) {
-        options.headers = options.headers || {};
-        options.headers["content-length"] = Buffer.byteLength(options.body);
-        console.log("am writing");
-      }
-
-      let req = session.request({
-        [HTTP2_HEADER_PATH]: u.pathname + u.search,
-        [HTTP2_HEADER_METHOD]: options?.method || "GET",
-        [HTTP2_HEADER_HOST]: u.host,
-        [HTTP2_HEADER_SCHEME]: u.protocol.replace(":", ""),
-      });
-
-      if (options?.body instanceof ReadableStream) {
-        let reader = options.body.getReader();
-        new Promise((resolve) => {
-          let read = () => {
-            reader.read().then(({ done, value }) => {
-              if (done) {
-                resolve(undefined);
-              } else {
-                req.write(value);
-                read();
-              }
-            });
-          };
-          read();
-        });
-      } else if (options?.body !== undefined) {
-        req.write(options?.body);
-      }
-
-      const stream = new ReadableStream({
-        start(controller) {
-          req.on("data", (chunk) => {
-            controller.enqueue(chunk);
-          });
-          req.on("end", () => {
-            controller.close();
-          });
-        },
-      });
-
-      req.on("error", reject);
-      req.on("response", (headers, flags) => {
-        let _headers: [string, string][] = [];
-        // We know htt2 will provide the status as a number
-        let status = headers[HTTP2_HEADER_STATUS] as unknown as number;
-        delete headers[HTTP2_HEADER_STATUS];
-        for (let name in headers) {
-          _headers.push([name, extractHeader(headers[name])]);
-        }
-        let resp = new Response(stream, { headers: _headers, status: status });
-
-        resolve(resp);
-      });
-    });
   }
   terminate() {
     this._terminated = true;
@@ -509,64 +472,6 @@ export class DenoHTTPWorker {
       forceKill(this._process.pid!);
     }
     this._httpSession?.close();
-  }
-
-  private async _send(data: any): Promise<any> {
-    return new Promise((resolve, reject) => {
-      if (this._httpSession === undefined) {
-        throw new Error("HTTP session not ready");
-      }
-      const req = this._httpSession.request({
-        "X-DENO-VM-RPC": "1",
-        [HTTP2_HEADER_PATH]: "/maxm",
-        [HTTP2_HEADER_METHOD]: "POST",
-        [HTTP2_HEADER_HOST]: "web.run.val.town",
-        [HTTP2_HEADER_SCHEME]: "https",
-      });
-      req.write(JSON.stringify(data));
-      req.on("response", (headers, flags) => {
-        for (const name in headers) {
-          console.log(`${name}: ${headers[name]}`);
-        }
-      });
-      let responseData = "";
-      req.on("data", (chunk) => {
-        responseData += chunk;
-      });
-      req.on("end", () => {
-        resolve(JSON.parse(responseData));
-      });
-
-      // const options = {
-      //   hostname: "nghttp2.org",
-      //   protocol: "https:",
-      //   path: "/httpbin/post",
-      //   method: "POST",
-      //   headers: {
-      //     "content-length": 6,
-      //   },
-      //   h2session: this._httpSession,
-      // };
-      // let request = http2.request(options, (response) => {
-      //   const body = [];
-      //   response.on("data", (chunk) => {
-      //     body.push(chunk);
-      //   });
-      //   response.on("end", () => {
-      //     resolve(Buffer.concat(body).toString());
-      //   });
-      // });
-      // request.write(JSON.stringify(data));
-      // this._got
-      //   .post("http://web.run.val.town/maxm", {
-      //     body: JSON.stringify(data),
-      //     headers: { "X-Deno-VM-RPC": 1 },
-      //   })
-      //   .json()
-      //   .then((data) => {
-      //     resolve(data);
-      //   });
-    });
   }
 }
 
