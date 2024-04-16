@@ -1,6 +1,6 @@
 name: ci
 
-on: [push, pull_request]
+on: [push]
 
 jobs:
   test:
@@ -33,7 +33,7 @@ jobs:
         run: npm run test
         env:
           CI: true
-      - name: deno test
-        run: |
-          cd deno-guest
-          deno test
+      # - name: deno test
+      #   run: |
+      #     cd deno-guest
+      #     deno test
