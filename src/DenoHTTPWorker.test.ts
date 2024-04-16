@@ -1,9 +1,9 @@
 import { it, describe, expect } from "vitest";
-import { DenoHTTPWorker } from "./index.js";
+import { newDenoHTTPWorker } from "./index.js";
 
-describe("DenoHTTPWorker", () => {
+describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   it("json response", async () => {
-    let worker = new DenoHTTPWorker(`
+    let worker = await newDenoHTTPWorker(`
         export default async function (req: Request): Promise<Response> {
           let headers = {};
           for (let [key, value] of req.headers.entries()) {
@@ -13,8 +13,9 @@ describe("DenoHTTPWorker", () => {
         }
       `);
 
-    let got = await worker.getClient();
-    let json = await got.get("https://localhost/", { headers: {} }).json();
+    let json = await worker.client
+      .get("https://localhost/", { headers: {} })
+      .json();
     expect(json).toEqual({
       ok: "https://localhost/",
       headers: {
@@ -25,22 +26,38 @@ describe("DenoHTTPWorker", () => {
     worker.terminate();
   });
   it("post with body", async () => {
-    let worker = new DenoHTTPWorker(`
+    let worker = await newDenoHTTPWorker(`
         export default async function (req: Request): Promise<Response> {
-          console.log(req.body)
           let body = await req.text();
           return Response.json({ length: body.length })
         }
       `);
 
-    let got = await worker.getClient();
-
-    let resp = got("https://localhost:8080/", {
+    let resp = worker.client("https://localhost:8080/", {
       body: "hello",
       method: "POST",
     });
     expect(await resp.json()).toEqual({ length: 5 });
-
     worker.terminate();
+  });
+
+  it("port log is not in output", async () => {
+    let worker = await newDenoHTTPWorker(
+      `console.log("Hi, I am here");
+    export default async function (req: Request): Promise<Response> {
+      let body = await req.text();
+      return Response.json({ length: body.length })
+    }`
+    );
+    let allStdout = "";
+
+    worker.stdout.on("data", (data) => {
+      allStdout += data;
+    });
+
+    await worker.client("https://hey.ho").text();
+    worker.terminate();
+
+    expect(allStdout).toEqual("Hi, I am here\n");
   });
 });

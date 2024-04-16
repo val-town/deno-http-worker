@@ -1,6 +1,6 @@
 import path, { resolve } from "path";
 import { ChildProcess, spawn, SpawnOptions, execSync } from "child_process";
-import { Readable } from "stream";
+import { Readable, TransformCallback, Transform } from "stream";
 import http2 from "http2-wrapper";
 import got, { Got } from "got";
 
@@ -8,6 +8,8 @@ import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const DENO_PORT_LOG_PREFIX = "deno-listening-port";
 
 const DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH = __dirname.endsWith("src")
   ? resolve(__dirname, "../deno-guest/index.ts")
@@ -21,30 +23,18 @@ export interface DenoWorkerOptions {
   denoExecutable: string;
 
   /**
-   * The path to the script that should be used to bootstrap the worker environment in Deno.
-   * If specified, this script will be used instead of the default bootstrap script.
-   * Only advanced users should set this.
+   * The path to the script that should be used to bootstrap the worker
+   * environment in Deno. If specified, this script will be used instead of the
+   * default bootstrap script. Only advanced users should set this.
    */
   denoBootstrapScriptPath: string;
 
   /**
-   * Whether to reload scripts.
-   * If given a list of strings then only the specified URLs will be reloaded.
-   * Defaults to false when NODE_ENV is set to "production" and true otherwise.
+   * Whether to reload scripts. If given a list of strings then only the
+   * specified URLs will be reloaded. Defaults to false when NODE_ENV is set to
+   * "production" and true otherwise.
    */
   reload: boolean | string[];
-
-  /**
-   * Whether to log stdout from the worker.
-   * Defaults to true.
-   */
-  logStdout: boolean;
-
-  /**
-   * Whether to log stderr from the worker.
-   * Defaults to true.
-   */
-  logStderr: boolean;
 
   /**
    * Whether to use Deno's unstable features
@@ -58,13 +48,13 @@ export interface DenoWorkerOptions {
         bareNodeBuiltins?: boolean;
 
         /**
-         *  Enable unstable 'bring your own node_modules' feature
+         * Enable unstable 'bring your own node_modules' feature
          */
         byonm?: boolean;
 
         /**
-         * Enable unstable resolving of specifiers by extension probing,
-         * .js to .ts, and directory probing.
+         * Enable unstable resolving of specifiers by extension probing, .js to
+         * .ts, and directory probing.
          */
         sloppyImports?: boolean;
 
@@ -150,14 +140,13 @@ export interface DenoWorkerOptions {
   denoNoCheck: boolean;
 
   /**
-   * Allow Deno to make requests to hosts with certificate
-   * errors.
+   * Allow Deno to make requests to hosts with certificate errors.
    */
   unsafelyIgnoreCertificateErrors: boolean;
 
   /**
-   * Specify the --location flag, which defines location.href.
-   * This must be a valid URL if provided.
+   * Specify the --location flag, which defines location.href. This must be a
+   * valid URL if provided.
    */
   location?: string;
 
@@ -172,55 +161,49 @@ export interface DenoWorkerOptions {
     allowAll?: boolean;
 
     /**
-     * Whether to allow network connnections.
-     * If given a list of strings then only the specified origins/paths are allowed.
-     * Defaults to false.
+     * Whether to allow network connnections. If given a list of strings then
+     * only the specified origins/paths are allowed. Defaults to false.
      */
     allowNet?: boolean | string[];
 
     /**
-     * Disable network access to provided IP addresses or hostnames. Any addresses
-     * specified here will be denied access, even if they are specified in
-     * `allowNet`. Note that deno-vm needs a network connection between the host
-     * and the guest, so it's not possible to fully disable network access.
+     * Disable network access to provided IP addresses or hostnames. Any
+     * addresses specified here will be denied access, even if they are
+     * specified in `allowNet`. Note that deno-vm needs a network connection
+     * between the host and the guest, so it's not possible to fully disable
+     * network access.
      */
     denyNet?: string[];
 
     /**
-     * Whether to allow reading from the filesystem.
-     * If given a list of strings then only the specified file paths are allowed.
-     * Defaults to false.
+     * Whether to allow reading from the filesystem. If given a list of strings
+     * then only the specified file paths are allowed. Defaults to false.
      */
     allowRead?: boolean | string[];
 
     /**
-     * Whether to allow writing to the filesystem.
-     * If given a list of strings then only the specified file paths are allowed.
-     * Defaults to false.
+     * Whether to allow writing to the filesystem. If given a list of strings
+     * then only the specified file paths are allowed. Defaults to false.
      */
     allowWrite?: boolean | string[];
 
     /**
-     * Whether to allow reading environment variables.
-     * Defaults to false.
+     * Whether to allow reading environment variables. Defaults to false.
      */
     allowEnv?: boolean | string[];
 
     /**
-     * Whether to allow running Deno plugins.
-     * Defaults to false.
+     * Whether to allow running Deno plugins. Defaults to false.
      */
     allowPlugin?: boolean;
 
     /**
-     * Whether to allow running subprocesses.
-     * Defaults to false.
+     * Whether to allow running subprocesses. Defaults to false.
      */
     allowRun?: boolean | string[];
 
     /**
-     * Whether to allow high resolution time measurement.
-     * Defaults to false.
+     * Whether to allow high resolution time measurement. Defaults to false.
      */
     allowHrtime?: boolean;
   };
@@ -231,249 +214,275 @@ export interface DenoWorkerOptions {
   spawnOptions: SpawnOptions;
 }
 
-export class DenoHTTPWorker {
-  private _httpSession?: http2.ClientHttp2Session;
-  private _got?: Got;
-  private _process: ChildProcess;
-  private _options: DenoWorkerOptions;
-  private _stdout: Readable;
-  private _stderr: Readable;
-  private _terminated: Boolean;
-  private _ready: Boolean;
-  private _pendingSessionRequests: {
-    resolve: (value: Got) => void;
-  }[];
+export const newDenoHTTPWorker = async (
+  script: string | URL,
+  options?: Partial<DenoWorkerOptions>
+): Promise<DenoHTTPWorker> => {
+  const _options = Object.assign(
+    {
+      denoExecutable: "deno",
+      denoBootstrapScriptPath: DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH,
+      reload: process.env.NODE_ENV !== "production",
+      denoUnstable: false,
+      location: undefined,
+      permissions: {},
+      denoV8Flags: [],
+      denoImportMapPath: "",
+      denoLockFilePath: "",
+      denoCachedOnly: false,
+      denoNoCheck: false,
+      unsafelyIgnoreCertificateErrors: false,
+      spawnOptions: {},
+    },
+    options || {}
+  );
 
-  constructor(script: string | URL, options?: Partial<DenoWorkerOptions>) {
-    this._ready = false;
-    this._terminated = true;
-    this._stdout = new Readable();
-    this._stdout.setEncoding("utf-8");
-    this._stderr = new Readable();
-    this._stderr.setEncoding("utf-8");
-    this._pendingSessionRequests = [];
+  let scriptArgs: string[];
 
-    this._options = Object.assign(
-      {
-        denoExecutable: "deno",
-        denoBootstrapScriptPath: DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH,
-        reload: process.env.NODE_ENV !== "production",
-        logStdout: true,
-        logStderr: true,
-        denoUnstable: false,
-        location: undefined,
-        permissions: {},
-        denoV8Flags: [],
-        denoImportMapPath: "",
-        denoLockFilePath: "",
-        denoCachedOnly: false,
-        denoNoCheck: false,
-        unsafelyIgnoreCertificateErrors: false,
-        spawnOptions: {},
-      },
-      options || {}
-    );
+  if (typeof script === "string") {
+    scriptArgs = ["script", script];
+  } else {
+    scriptArgs = ["import", script.href];
+  }
 
-    let scriptArgs: string[];
+  let runArgs = [] as string[];
 
-    if (typeof script === "string") {
-      scriptArgs = ["script", script];
-    } else {
-      scriptArgs = ["import", script.href];
+  // TODO: Let the host be user configurable?
+  let allowAddress = "0.0.0.0:0";
+
+  addOption(runArgs, "--reload", _options.reload);
+  if (_options.denoUnstable === true) {
+    runArgs.push("--unstable");
+  } else if (_options.denoUnstable) {
+    for (let [key] of Object.entries(_options.denoUnstable).filter(
+      ([_key, val]) => val
+    )) {
+      runArgs.push(
+        `--unstable-${key.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase())}`
+      );
     }
+  }
+  addOption(runArgs, "--cached-only", _options.denoCachedOnly);
+  addOption(runArgs, "--no-check", _options.denoNoCheck);
+  addOption(
+    runArgs,
+    "--unsafely-ignore-certificate-errors",
+    _options.unsafelyIgnoreCertificateErrors
+  );
+  if (_options.location) {
+    addOption(runArgs, "--location", [_options.location]);
+  }
 
-    let runArgs = [] as string[];
+  if (_options.denoV8Flags.length > 0) {
+    addOption(runArgs, "--v8-flags", _options.denoV8Flags);
+  }
 
-    // TODO: Let this be user configurable?
-    let allowAddress = "0.0.0.0:0";
+  if (_options.denoImportMapPath) {
+    addOption(runArgs, "--import-map", [_options.denoImportMapPath]);
+  }
 
-    addOption(runArgs, "--reload", this._options.reload);
-    if (this._options.denoUnstable === true) {
-      runArgs.push("--unstable");
-    } else if (this._options.denoUnstable) {
-      for (let [key] of Object.entries(this._options.denoUnstable).filter(
-        ([_key, val]) => val
-      )) {
-        runArgs.push(
-          `--unstable-${key.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase())}`
+  if (_options.denoLockFilePath) {
+    addOption(runArgs, "--lock", [_options.denoLockFilePath]);
+  }
+
+  if (_options.permissions) {
+    addOption(runArgs, "--allow-all", _options.permissions.allowAll);
+    if (!_options.permissions.allowAll) {
+      addOption(
+        runArgs,
+        "--allow-net",
+        typeof _options.permissions.allowNet === "boolean"
+          ? _options.permissions.allowNet
+          : _options.permissions.allowNet
+          ? [..._options.permissions.allowNet, allowAddress]
+          : [allowAddress]
+      );
+      // Ensures the `allowAddress` isn't denied
+      const deniedAddresses = _options.permissions.denyNet?.filter(
+        (address) => address !== allowAddress
+      );
+      addOption(
+        runArgs,
+        "--deny-net",
+        // Ensures an empty array isn't used
+        deniedAddresses?.length ? deniedAddresses : false
+      );
+      addOption(runArgs, "--allow-read", _options.permissions.allowRead);
+      addOption(runArgs, "--allow-write", _options.permissions.allowWrite);
+      addOption(runArgs, "--allow-env", _options.permissions.allowEnv);
+      addOption(runArgs, "--allow-plugin", _options.permissions.allowPlugin);
+      addOption(runArgs, "--allow-hrtime", _options.permissions.allowHrtime);
+    }
+  }
+  return new Promise((resolve, reject) => {
+    const process = spawn(
+      _options.denoExecutable,
+      ["run", ...runArgs, _options.denoBootstrapScriptPath, ...scriptArgs],
+      _options.spawnOptions
+    );
+    let running = false;
+    let worker: DenoHTTPWorker;
+    process.on("exit", (code: number, signal: string) => {
+      if (!running) {
+        reject(
+          new Error(
+            `Deno process exited before it was ready: code: ${code}, signal: ${signal}`
+          )
         );
+      } else {
+        worker.terminate(code, signal);
       }
-    }
-    addOption(runArgs, "--cached-only", this._options.denoCachedOnly);
-    addOption(runArgs, "--no-check", this._options.denoNoCheck);
-    addOption(
-      runArgs,
-      "--unsafely-ignore-certificate-errors",
-      this._options.unsafelyIgnoreCertificateErrors
-    );
-    if (this._options.location) {
-      addOption(runArgs, "--location", [this._options.location]);
-    }
-
-    if (this._options.denoV8Flags.length > 0) {
-      addOption(runArgs, "--v8-flags", this._options.denoV8Flags);
-    }
-
-    if (this._options.denoImportMapPath) {
-      addOption(runArgs, "--import-map", [this._options.denoImportMapPath]);
-    }
-
-    if (this._options.denoLockFilePath) {
-      addOption(runArgs, "--lock", [this._options.denoLockFilePath]);
-    }
-
-    if (this._options.permissions) {
-      addOption(runArgs, "--allow-all", this._options.permissions.allowAll);
-      if (!this._options.permissions.allowAll) {
-        addOption(
-          runArgs,
-          "--allow-net",
-          typeof this._options.permissions.allowNet === "boolean"
-            ? this._options.permissions.allowNet
-            : this._options.permissions.allowNet
-            ? [...this._options.permissions.allowNet, allowAddress]
-            : [allowAddress]
-        );
-        // Ensures the `allowAddress` isn't denied
-        const deniedAddresses = this._options.permissions.denyNet?.filter(
-          (address) => address !== allowAddress
-        );
-        addOption(
-          runArgs,
-          "--deny-net",
-          // Ensures an empty array isn't used
-          deniedAddresses?.length ? deniedAddresses : false
-        );
-        addOption(runArgs, "--allow-read", this._options.permissions.allowRead);
-        addOption(
-          runArgs,
-          "--allow-write",
-          this._options.permissions.allowWrite
-        );
-        addOption(runArgs, "--allow-env", this._options.permissions.allowEnv);
-        addOption(
-          runArgs,
-          "--allow-plugin",
-          this._options.permissions.allowPlugin
-        );
-        addOption(
-          runArgs,
-          "--allow-hrtime",
-          this._options.permissions.allowHrtime
-        );
-      }
-    }
-
-    this._process = spawn(
-      this._options.denoExecutable,
-      ["run", ...runArgs, this._options.denoBootstrapScriptPath, ...scriptArgs],
-      this._options.spawnOptions
-    );
-    this._process.on("exit", (code: number, signal: string) => {
-      console.log("process exited");
     });
 
-    this._stdout = <Readable>this._process.stdout;
-    this._stderr = <Readable>this._process.stderr;
+    const stdout = <Readable>process.stdout;
+    const stderr = <Readable>process.stderr;
 
-    if (this._options.logStdout) {
-      this._stdout.setEncoding("utf-8");
-      this._stdout.on("data", (data) => {
-        // TODO: how to suppress this line from other stdout listeners?
-        if (data.includes("deno-vm-port")) {
-          const port = parseInt(data.split(" ")[1]);
-          console.log("got port", port);
-          if (!port) {
-            this.terminate();
-          }
-          this._httpSession = http2.connect(`http://localhost:${port}`);
-          this._httpSession.on("connect", (err) => {
-            this._ready = true;
-            this._got = got.extend({
-              hooks: {
-                beforeRequest: [
-                  (options) => {
-                    // Ensure that we use our existing session
-                    options.h2session = this._httpSession;
-                    options.http2 = true;
+    const onReadable = () => {
+      // We wait for stdout to be readable and then just read the bytes of the
+      // port number log line. If a user subscribes to the reader later they'll
+      // only see log output without the port line.
 
-                    // We follow got's example here:
-                    // https://github.com/sindresorhus/got/blob/88e623a0d8140e02eef44d784f8d0327118548bc/documentation/examples/h2c.js#L32-L34
-                    // But, this still surfaces a type error for various
-                    // differences between the implementation. Ignoring for now.
-                    //
-                    // @ts-ignore
-                    options.request = http2.request;
-
-                    // Ensure the got user-agent string is never present. If a
-                    // value is passed by the user it will override got's
-                    // default value.
-                    if (
-                      options.headers["user-agent"] ===
-                      "got (https://github.com/sindresorhus/got)"
-                    ) {
-                      delete options.headers["user-agent"];
-                    }
-
-                    // Got will block requests that have a scheme of https and
-                    // will also add a :443 port when not port exists. We pass
-                    // the parts of the url that we care about in headers so
-                    // that we can successfully assemble the request on the
-                    // other side.
-                    if (typeof options.url === "string") {
-                      options.url = new URL(options.url);
-                    }
-                    options.headers = {
-                      ...options.headers,
-                      "X-Deno-Worker-Host": options.url?.host,
-                      "X-Deno-Worker-Port": options.url?.port,
-                      "X-Deno-Worker-Protocol": options.url?.protocol,
-                    };
-                    if (options.url && options.url?.protocol === "https:") {
-                      options.url.protocol = "http:";
-                    }
-                  },
-                ],
-              },
-            });
-            this._pendingSessionRequests.forEach((req) => {
-              req.resolve(this._got!);
-            });
-          });
-        }
-        console.log("[deno]", data);
-      });
-    }
-    if (this._options.logStderr) {
-      this._stderr.setEncoding("utf-8");
-      this._stderr.on("data", (data) => {
-        console.log("[deno]", data);
-      });
-    }
-  }
-
-  async getClient(): Promise<Got> {
-    if (this._ready) {
-      if (this._got == undefined) {
-        throw new Error(
-          "DenoHTTPWorker is ready but the session does not exist"
+      // Length is: DENO_PORT_LOG_PREFIX + " " + port + padding + " " + newline
+      let data = stdout.read(DENO_PORT_LOG_PREFIX.length + 1 + 5 + 1 + 1);
+      stdout.removeListener("readable", onReadable);
+      let strData = data.toString();
+      if (!strData.startsWith(DENO_PORT_LOG_PREFIX)) {
+        reject(
+          new Error(
+            "First log output from deno process did not contain the expected port value"
+          )
         );
+        return;
       }
-      return this._got;
-    } else {
-      return new Promise((resolve) => {
-        this._pendingSessionRequests.push({ resolve });
+
+      const match = strData.match(/deno-listening-port +(\d+) /);
+      if (!match) {
+        reject(
+          new Error(
+            `First log output from deno process did not contain a valid port value: "${data}"`
+          )
+        );
+        return;
+      }
+      const port = match[1];
+      const _httpSession = http2.connect(`http://localhost:${port}`);
+      _httpSession.on("error", (err) => {
+        console.error("http2 session error", err);
       });
-    }
+      _httpSession.on("connect", () => {
+        const _got = got.extend({
+          hooks: {
+            beforeRequest: [
+              (options) => {
+                // Ensure that we use our existing session
+                options.h2session = _httpSession;
+                options.http2 = true;
+
+                // We follow got's example here:
+                // https://github.com/sindresorhus/got/blob/88e623a0d8140e02eef44d784f8d0327118548bc/documentation/examples/h2c.js#L32-L34
+                // But, this still surfaces a type error for various
+                // differences between the implementation. Ignoring for now.
+                //
+                // @ts-ignore
+                options.request = http2.request;
+
+                // Ensure the got user-agent string is never present. If a
+                // value is passed by the user it will override got's
+                // default value.
+                if (
+                  options.headers["user-agent"] ===
+                  "got (https://github.com/sindresorhus/got)"
+                ) {
+                  delete options.headers["user-agent"];
+                }
+
+                // Got will block requests that have a scheme of https and
+                // will also add a :443 port when not port exists. We pass
+                // the parts of the url that we care about in headers so
+                // that we can successfully assemble the request on the
+                // other side.
+                if (typeof options.url === "string") {
+                  options.url = new URL(options.url);
+                }
+                options.headers = {
+                  ...options.headers,
+                  "X-Deno-Worker-Host": options.url?.host,
+                  "X-Deno-Worker-Port": options.url?.port,
+                  "X-Deno-Worker-Protocol": options.url?.protocol,
+                };
+                if (options.url && options.url?.protocol === "https:") {
+                  options.url.protocol = "http:";
+                }
+              },
+            ],
+          },
+        });
+
+        worker = new DenoHTTPWorker(
+          _httpSession,
+          _got,
+          process,
+          stdout,
+          stderr
+        );
+        running = true;
+        resolve(worker);
+      });
+    };
+    stdout.on("readable", onReadable);
+  });
+};
+
+class DenoHTTPWorker {
+  private _httpSession: http2.ClientHttp2Session;
+  private _got: Got;
+  private _process: ChildProcess;
+  private _stdout: Readable;
+  private _stderr: Readable;
+  private _terminated: Boolean = false;
+
+  constructor(
+    httpSession: http2.ClientHttp2Session,
+    got: Got,
+    process: ChildProcess,
+    stdout: Readable,
+    stderr: Readable
+  ) {
+    this._httpSession = httpSession;
+    this._got = got;
+    this._process = process;
+    this._stdout = stdout;
+    this._stderr = stderr;
   }
-  terminate() {
+
+  get client(): Got {
+    return this._got;
+  }
+  terminate(code?: number, signal?: string) {
+    if (this._terminated) {
+      return;
+    }
+    this.onexit(code || this._process.exitCode || 0, signal || "");
     this._terminated = true;
     if (this._process && this._process.exitCode === null) {
       // this._process.kill();
       forceKill(this._process.pid!);
     }
-    this._httpSession?.close();
+    this._httpSession.close();
   }
+
+  get stdout() {
+    return this._stdout;
+  }
+
+  get stderr() {
+    return this._stderr;
+  }
+  /**
+   * Represents an event handler for the "exit" event. That is, a function to be
+   * called when the Deno worker process is terminated.
+   */
+  onexit: (code: number, signal: string) => void = () => {};
 }
 
 function addOption(
@@ -496,6 +505,8 @@ function addOption(
  * @param pid The ID of the process to kill.
  */
 export function forceKill(pid: number) {
+  // TODO: do we need to SIGINT first to make sure we allow the process to do
+  // any cleanup?
   const isWindows = /^win/.test(process.platform);
   if (isWindows) {
     return killWindows(pid);
