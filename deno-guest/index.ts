@@ -1,6 +1,11 @@
 const scriptType = Deno.args[0];
 const script = Deno.args[1];
 
+const importURL =
+  scriptType == "import"
+    ? script
+    : "data:text/tsx," + encodeURIComponent(script);
+
 let handler: { default: (req: Request) => Promise<Response> | Response };
 let importing = true;
 let pendingRequests: {
@@ -19,7 +24,7 @@ Deno.serve(
       // Now that we're listening, start executing user-provided code. We could
       // import while starting the server for a small performance improvement,
       // but it would complicate reading the port from the Deno logs.
-      handler = await import(`data:text/tsx,${encodeURIComponent(script)}`);
+      handler = await import(importURL);
       if (!handler.default) {
         throw new Error("No default export found in script.");
       }

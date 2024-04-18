@@ -324,9 +324,11 @@ export const newDenoHTTPWorker = async (
     let worker: DenoHTTPWorker;
     process.on("exit", (code: number, signal: string) => {
       if (!running) {
+        let stderr = process.stderr?.read()?.toString();
         reject(
           new Error(
-            `Deno process exited before it was ready: code: ${code}, signal: ${signal}`
+            `Deno process exited before it was ready: code: ${code}, signal: ${signal}` +
+              (stderr ? `\n${stderr}` : "")
           )
         );
       } else {
@@ -367,7 +369,12 @@ export const newDenoHTTPWorker = async (
       const port = match[1];
       const _httpSession = http2.connect(`http://localhost:${port}`);
       _httpSession.on("error", (err) => {
-        console.error("http2 session error", err);
+        if (!running) {
+          reject(err);
+        } else {
+          worker.terminate();
+          throw err;
+        }
       });
       _httpSession.on("connect", () => {
         const _got = got.extend({
@@ -432,6 +439,7 @@ export const newDenoHTTPWorker = async (
     stdout.on("readable", onReadable);
   });
 };
+export type { DenoHTTPWorker };
 
 class DenoHTTPWorker {
   private _httpSession: http2.ClientHttp2Session;

@@ -30,7 +30,6 @@
     "vitest": "^1.5.0"
   },
   "dependencies": {
-    "got": "^14.2.1",
-    "http2-wrapper": "^2.2.1"
+    "got": "^14.2.1"
   }
 }
