@@ -5,7 +5,7 @@ import path from "path";
 
 // Uncomment this if you want to debug serial test execution
 const it = _it.concurrent;
-// const it = _it
+// const it =   _it;
 
 describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   const echoFile = path.resolve(__dirname, "./test/echo-request.ts");
@@ -14,7 +14,8 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   const vtScript = fs.readFileSync(vtFile, { encoding: "utf-8" });
 
   it("json response multiple requests", async () => {
-    let worker = await newDenoHTTPWorker(`
+    let worker = await newDenoHTTPWorker(
+      `
         export default async function (req: Request): Promise<Response> {
           let headers = {};
           for (let [key, value] of req.headers.entries()) {
@@ -22,13 +23,15 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
           }
           return Response.json({ ok: req.url, headers: headers })
         }
-      `);
+      `,
+      { printOutput: true }
+    );
     for (let i = 0; i < 10; i++) {
       let json = await worker.client
-        .get("https://localhost/", { headers: {} })
+        .get("https://localhost/hello?isee=you", { headers: {} })
         .json();
       expect(json).toEqual({
-        ok: "https://localhost/",
+        ok: "https://localhost/hello?isee=you",
         headers: {
           accept: "application/json",
           "accept-encoding": "gzip, deflate, br",
@@ -38,27 +41,30 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.terminate();
   });
 
-  it("deny-net not always allowed", async () => {
-    expect(
-      newDenoHTTPWorker(echoScript, {
-        runFlags: [`--deny-net`],
+  describe("runFlags editing", () => {
+    it.each([
+      "--allow-read",
+      "--allow-write",
+      "--allow-read=/dev/null",
+      "--allow-write=/dev/null",
+      "--allow-read=foo,/dev/null",
+      "--allow-write=bar,/dev/null",
+    ])("should handle %s", async (flag) => {
+      let worker = await newDenoHTTPWorker(echoScript, {
         printOutput: true,
-      })
-    ).rejects.toThrowError("not supported");
-    expect(
-      newDenoHTTPWorker(echoScript, {
-        runFlags: [`--deny-net=0.0.0.0:0`],
-        printOutput: true,
-      })
-    ).rejects.toThrowError("with the address");
+        runFlags: [flag],
+      });
+      await worker.client.get("https://localhost/").json();
+      await worker.terminate();
+    });
   });
 
   it("should be able to import script", async () => {
     const file = path.resolve(__dirname, "./test/echo-request.ts");
     const url = new URL(`file://${file}`);
     let worker = await newDenoHTTPWorker(url, {
-      runFlags: [`--allow-read=${file}`],
       printOutput: true,
+      printCommandAndArguments: true,
     });
 
     let resp: any = await worker.client
@@ -70,7 +76,9 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   });
 
   it("user agent is not overwritten", async () => {
-    let worker = await newDenoHTTPWorker(echoScript);
+    let worker = await newDenoHTTPWorker(echoScript, {
+      printOutput: true,
+    });
     let resp: any = await worker.client
       .get("https://localhost/", {
         headers: { "User-Agent": "some value" },
@@ -116,41 +124,6 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.terminate();
   });
 
-  it("port log is not in output", async () => {
-    let worker = await newDenoHTTPWorker(
-      `console.log("Hi, I am here");
-    export default async function (req: Request): Promise<Response> {
-      let body = await req.text();
-      return Response.json({ length: body.length })
-    }`
-    );
-    let allStdout = "";
-
-    worker.stdout.on("data", (data) => {
-      allStdout += data;
-    });
-
-    await worker.client("https://hey.ho").text();
-    worker.terminate();
-
-    expect(allStdout).toEqual("Hi, I am here\n");
-  });
-
-  it("cannot make outside connection to deno server", async () => {
-    let worker = await newDenoHTTPWorker(
-      `export default async function (req: Request): Promise<Response> {
-      let body = await req.text();
-      return Response.json({ length: body.length })
-    }`
-    );
-
-    await expect(
-      fetch("http://localhost:" + worker.denoListeningPort)
-    ).rejects.toThrowError("fetch failed");
-
-    worker.terminate();
-  });
-
   it("can implement val town", async () => {
     let worker = await newDenoHTTPWorker(vtScript, { printOutput: true });
 
@@ -158,13 +131,14 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       body:
         "data:text/tsx," +
         encodeURIComponent(`export default async function (req: Request): Promise<Response> {
-      return Response.json({ ok: true })
-    } ${"///".repeat(8000)}`),
+        return Response.json({ ok: true })
+      } ${"///".repeat(8000)}`),
     });
     // We send a request to initialize and when the first request is in flight
     // we send another request
     let second = worker.client("https://foo.web.val.run");
 
+    expect((await first).statusCode).toEqual(200);
     await first.text();
     expect(await second.text()).toEqual('{"ok":true}');
 

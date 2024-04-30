@@ -1,14 +1,17 @@
 {
   "name": "deno-http-worker",
-  "version": "0.0.0",
+  "version": "0.0.2",
   "description": "",
-  "main": "dist/plugin.js",
-  "types": "./dist/plugin.d.ts",
+  "main": "dist/index.js",
+  "types": "./dist/index.d.ts",
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint" : "npm run lint:deno-bootstrap && npm run lint:deno-test-files",
+    "lint:deno-bootstrap": "cd deno-bootstrap && deno lint",
+    "lint:deno-test-files": "cd src/test && deno lint",
     "build": "tsc --build",
-    "prepare": "npm run build"
+    "prepare": "npm run lint && npm run build"
   },
   "repository": {
     "type": "git",
