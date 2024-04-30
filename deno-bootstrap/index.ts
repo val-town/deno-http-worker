@@ -33,6 +33,12 @@ const conn = await server.accept();
     conn.close();
   }
 })();
+
+// serveHttp is deprecated, but we don't have many other options if we'd like to
+// keep this pattern of rejecting future connections at the TCP level.
+// https://discord.com/channels/684898665143206084/1232398264947445810/1234614780111880303
+//
+// deno-lint-ignore no-deprecated-deno-api
 const httpConn = Deno.serveHttp(conn);
 for await (const requestEvent of httpConn) {
   (async () => {

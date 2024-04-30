@@ -1,6 +1,6 @@
 import path, { resolve } from "path";
 import { ChildProcess, spawn, SpawnOptions, execSync } from "child_process";
-import { Readable, TransformCallback, Transform } from "stream";
+import { Readable, Writable, TransformCallback, Transform } from "stream";
 import readline from "readline";
 import http2 from "http2-wrapper";
 import got, { Got } from "got";
@@ -11,6 +11,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const DENO_PORT_LOG_PREFIX = "deno-listening-port";
+const LISTENING_HOSTPORT = "0.0.0.0:0";
 
 const DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH = __dirname.endsWith("src")
   ? resolve(__dirname, "../deno-bootstrap/index.ts")
@@ -32,26 +33,28 @@ export interface DenoWorkerOptions {
   denoBootstrapScriptPath: string;
 
   /**
-   * Flags that are passed to the Deno process. These are modified to ensure
-   * that we can make an HTTP connection to the worker. Use the
-   * `printProcessArguments` option to debug which flags values are passed to
-   * the process.
+   * Flags that are passed to the Deno process. These flags follow the `deno
+   * run` command and can be used to enabled/disabled various permissions and
+   * features. These flags will be modified to ensure that the deno process can
+   * run the http server we'll be connecting to. Toggle the
+   * printCommandAndArguments if you need to understand what the final flag
+   * values are.
    *
-   * You can review Deno's available flags here:
+   * Review Deno's available flags here:
    * https://docs.deno.com/runtime/manual/getting_started/command_line_interface
    */
-  denoFlags: { [key: string]: string[] | undefined };
+  runFlags: string[];
 
   /**
    * Print stdout and stderr to the console with a "[deno]" prefix. This is
-   * useful for debugging. This consumes stdout/stderr.
+   * useful for debugging.
    */
   printOutput: boolean;
 
   /**
-   * Print out the arguments that are passed to the Deno process.
+   * Print out the command and arguments that are executed.
    */
-  printProcessArguments: boolean;
+  printCommandAndArguments: boolean;
 
   /**
    * Options used to spawn the Deno child process
@@ -67,20 +70,38 @@ export const newDenoHTTPWorker = async (
     {
       denoExecutable: "deno",
       denoBootstrapScriptPath: DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH,
-      denoFlags: {},
-      printProcessArguments: false,
+      runFlags: [],
+      printCommandAndArguments: false,
       spawnOptions: {},
       printOutput: false,
     },
     options || {}
   );
 
-  // TODO: Let the host be user configurable?
-  // TODO: allow specifying --allow-net catchall
-  _options.denoFlags["--allow-net"] = [
-    "0.0.0.0:0",
-    ...(_options.denoFlags["--allow-net"] || []),
-  ];
+  let networkingIsOk = false;
+  _options.runFlags = _options.runFlags.map((flag) => {
+    if (flag === "--allow-net" || flag === "--allow-all") {
+      networkingIsOk = true;
+    }
+    if (flag === "--deny-net") {
+      throw new Error(
+        "Using --deny-net without specifying specific addresses is not supported"
+      );
+    }
+    if (flag.startsWith("--deny-net") && flag.includes(LISTENING_HOSTPORT)) {
+      throw new Error(
+        `Using --deny-net with the address ${LISTENING_HOSTPORT} is not supported`
+      );
+    }
+    if (flag.startsWith("--allow-net=")) {
+      networkingIsOk = true;
+      return (flag += "," + LISTENING_HOSTPORT);
+    }
+    return flag;
+  });
+  if (!networkingIsOk) {
+    _options.runFlags.push("--allow-net=" + LISTENING_HOSTPORT);
+  }
 
   let scriptArgs: string[];
 
@@ -89,11 +110,6 @@ export const newDenoHTTPWorker = async (
   } else {
     scriptArgs = ["import", script.href];
   }
-
-  let runArgs: string[] = Object.keys(_options.denoFlags).map((key) => {
-    let value = _options.denoFlags[key];
-    return value ? `${key}=${value.join(",")}` : `${key}`;
-  });
 
   let command = "deno";
   if (typeof _options.denoExecutable === "string") {
@@ -105,15 +121,23 @@ export const newDenoHTTPWorker = async (
       throw new Error("denoExecutable must not be empty");
 
     command = _options.denoExecutable[0]!;
-    runArgs = [..._options.denoExecutable.slice(1), ...runArgs];
+    _options.runFlags = [
+      ..._options.denoExecutable.slice(1),
+      ..._options.runFlags,
+    ];
   }
 
   return new Promise((resolve, reject) => {
-    const process = spawn(
-      command,
-      ["run", ...runArgs, _options.denoBootstrapScriptPath, ...scriptArgs],
-      _options.spawnOptions
-    );
+    const args = [
+      "run",
+      ..._options.runFlags,
+      _options.denoBootstrapScriptPath,
+      ...scriptArgs,
+    ];
+    if (_options.printCommandAndArguments) {
+      console.log("Spawning deno process:", JSON.stringify([command, ...args]));
+    }
+    const process = spawn(command, args, _options.spawnOptions);
     let running = false;
     let worker: DenoHTTPWorker;
     process.on("exit", (code: number, signal: string) => {
@@ -218,6 +242,14 @@ export const newDenoHTTPWorker = async (
             ],
           },
         });
+        if (_options.printOutput) {
+          readline.createInterface({ input: stdout }).on("line", (line) => {
+            console.log("[deno]", line);
+          });
+          readline.createInterface({ input: stderr }).on("line", (line) => {
+            console.error("[deno]", line);
+          });
+        }
 
         worker = new DenoHTTPWorker(
           _httpSession,
@@ -237,13 +269,13 @@ export const newDenoHTTPWorker = async (
 export type { DenoHTTPWorker };
 
 class DenoHTTPWorker {
-  private _httpSession: http2.ClientHttp2Session;
-  private _got: Got;
-  private _denoListeningPort: number;
-  private _process: ChildProcess;
-  private _stdout: Readable;
-  private _stderr: Readable;
-  private _terminated: Boolean = false;
+  #httpSession: http2.ClientHttp2Session;
+  #got: Got;
+  #denoListeningPort: number;
+  #process: ChildProcess;
+  #stdout: Readable;
+  #stderr: Readable;
+  #terminated: Boolean = false;
 
   constructor(
     httpSession: http2.ClientHttp2Session,
@@ -253,40 +285,40 @@ class DenoHTTPWorker {
     stdout: Readable,
     stderr: Readable
   ) {
-    this._httpSession = httpSession;
-    this._denoListeningPort = denoListeningPort;
-    this._got = got;
-    this._process = process;
-    this._stdout = stdout;
-    this._stderr = stderr;
+    this.#httpSession = httpSession;
+    this.#denoListeningPort = denoListeningPort;
+    this.#got = got;
+    this.#process = process;
+    this.#stdout = stdout;
+    this.#stderr = stderr;
   }
 
   get client(): Got {
-    return this._got;
+    return this.#got;
   }
   terminate(code?: number, signal?: string) {
-    if (this._terminated) {
+    if (this.#terminated) {
       return;
     }
-    this.onexit(code || this._process.exitCode || 0, signal || "");
-    this._terminated = true;
-    if (this._process && this._process.exitCode === null) {
-      // this._process.kill();
-      forceKill(this._process.pid!);
+    this.onexit(code || this.#process.exitCode || 0, signal || "");
+    this.#terminated = true;
+    if (this.#process && this.#process.exitCode === null) {
+      // TODO: is this preventing listening on SIGINT for cleanup? Do we care?
+      forceKill(this.#process.pid!);
     }
-    this._httpSession.close();
+    this.#httpSession.close();
   }
 
   get stdout() {
-    return this._stdout;
+    return this.#stdout;
   }
 
   get stderr() {
-    return this._stderr;
+    return this.#stderr;
   }
 
   get denoListeningPort(): number {
-    return this._denoListeningPort;
+    return this.#denoListeningPort;
   }
   /**
    * Represents an event handler for the "exit" event. That is, a function to be

@@ -2,7 +2,7 @@ import { it as _it, describe, expect } from "vitest";
 import { newDenoHTTPWorker } from "./index.js";
 import fs from "fs";
 import path from "path";
-import readline from "readline";
+
 // Uncomment this if you want to debug serial test execution
 const it = _it.concurrent;
 // const it = _it
@@ -38,19 +38,27 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.terminate();
   });
 
+  it("deny-net not always allowed", async () => {
+    expect(
+      newDenoHTTPWorker(echoScript, {
+        runFlags: [`--deny-net`],
+        printOutput: true,
+      })
+    ).rejects.toThrowError("not supported");
+    expect(
+      newDenoHTTPWorker(echoScript, {
+        runFlags: [`--deny-net=0.0.0.0:0`],
+        printOutput: true,
+      })
+    ).rejects.toThrowError("with the address");
+  });
+
   it("should be able to import script", async () => {
     const file = path.resolve(__dirname, "./test/echo-request.ts");
     const url = new URL(`file://${file}`);
     let worker = await newDenoHTTPWorker(url, {
-      denoFlags: {
-        "--allow-read": [file],
-      },
-    });
-    process.stderr.on("data", (data) => {
-      console.error(data.toString());
-    });
-    process.stdout.on("data", (data) => {
-      console.log(data.toString());
+      runFlags: [`--allow-read=${file}`],
+      printOutput: true,
     });
 
     let resp: any = await worker.client
@@ -144,13 +152,8 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   });
 
   it("can implement val town", async () => {
-    let worker = await newDenoHTTPWorker(vtScript);
-    worker.stdout.on("data", (data) => {
-      console.log(data.toString());
-    });
-    worker.stderr.on("data", (data) => {
-      console.error(data.toString());
-    });
+    let worker = await newDenoHTTPWorker(vtScript, { printOutput: true });
+
     let first = worker.client.post("https://localhost:8080/", {
       body:
         "data:text/tsx," +
