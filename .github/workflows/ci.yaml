@@ -35,5 +35,5 @@ jobs:
           CI: true
       # - name: deno test
       #   run: |
-      #     cd deno-guest
+      #     cd deno-bootstrap
       #     deno test

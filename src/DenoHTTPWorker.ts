@@ -1,6 +1,7 @@
 import path, { resolve } from "path";
 import { ChildProcess, spawn, SpawnOptions, execSync } from "child_process";
 import { Readable, TransformCallback, Transform } from "stream";
+import readline from "readline";
 import http2 from "http2-wrapper";
 import got, { Got } from "got";
 
@@ -12,15 +13,16 @@ const __dirname = path.dirname(__filename);
 const DENO_PORT_LOG_PREFIX = "deno-listening-port";
 
 const DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH = __dirname.endsWith("src")
-  ? resolve(__dirname, "../deno-guest/index.ts")
-  : resolve(__dirname, "../../deno-guest/index.ts");
+  ? resolve(__dirname, "../deno-bootstrap/index.ts")
+  : resolve(__dirname, "../../deno-bootstrap/index.ts");
 
 export interface DenoWorkerOptions {
   /**
    * The path to the executable that should be use when spawning the subprocess.
-   * Defaults to "deno".
+   * Defaults to "deno". You can pass an array here if you want to invoke Deno
+   * with multiple arguments, like `sandbox run deno`.
    */
-  denoExecutable: string;
+  denoExecutable: string | string[];
 
   /**
    * The path to the script that should be used to bootstrap the worker
@@ -30,183 +32,26 @@ export interface DenoWorkerOptions {
   denoBootstrapScriptPath: string;
 
   /**
-   * Whether to reload scripts. If given a list of strings then only the
-   * specified URLs will be reloaded. Defaults to false when NODE_ENV is set to
-   * "production" and true otherwise.
+   * Flags that are passed to the Deno process. These are modified to ensure
+   * that we can make an HTTP connection to the worker. Use the
+   * `printProcessArguments` option to debug which flags values are passed to
+   * the process.
+   *
+   * You can review Deno's available flags here:
+   * https://docs.deno.com/runtime/manual/getting_started/command_line_interface
    */
-  reload: boolean | string[];
+  denoFlags: { [key: string]: string[] | undefined };
 
   /**
-   * Whether to use Deno's unstable features
+   * Print stdout and stderr to the console with a "[deno]" prefix. This is
+   * useful for debugging. This consumes stdout/stderr.
    */
-  denoUnstable:
-    | boolean
-    | {
-        /**
-         * Enable unstable bare node builtins feature
-         */
-        bareNodeBuiltins?: boolean;
-
-        /**
-         * Enable unstable 'bring your own node_modules' feature
-         */
-        byonm?: boolean;
-
-        /**
-         * Enable unstable resolving of specifiers by extension probing, .js to
-         * .ts, and directory probing.
-         */
-        sloppyImports?: boolean;
-
-        /**
-         * Enable unstable `BroadcastChannel` API
-         */
-        broadcastChannel?: boolean;
-
-        /**
-         * Enable unstable Deno.cron API
-         */
-        cron?: boolean;
-
-        /**
-         * Enable unstable FFI APIs
-         */
-        ffi?: boolean;
-
-        /**
-         * Enable unstable file system APIs
-         */
-        fs?: boolean;
-
-        /**
-         * Enable unstable HTTP APIs
-         */
-        http?: boolean;
-
-        /**
-         * Enable unstable Key-Value store APIs
-         */
-        kv?: boolean;
-
-        /**
-         * Enable unstable net APIs
-         */
-        net?: boolean;
-
-        /**
-         * Enable unstable Temporal API
-         */
-        temporal?: boolean;
-
-        /**
-         * Enable unsafe __proto__ support. This is a security risk.
-         */
-        unsafeProto?: boolean;
-
-        /**
-         * Enable unstable `WebGPU` API
-         */
-        webgpu?: boolean;
-
-        /**
-         * Enable unstable Web Worker APIs
-         */
-        workerOptions?: boolean;
-      };
+  printOutput: boolean;
 
   /**
-   * V8 flags to be set when starting Deno
+   * Print out the arguments that are passed to the Deno process.
    */
-  denoV8Flags: string[];
-
-  /**
-   * Path where deno can find an import map
-   */
-  denoImportMapPath: string;
-
-  /**
-   * Path where deno can find a lock file
-   */
-  denoLockFilePath: string;
-
-  /**
-   * Whether to disable fetching uncached dependencies
-   */
-  denoCachedOnly: boolean;
-
-  /**
-   * Whether to disable typechecking when starting Deno
-   */
-  denoNoCheck: boolean;
-
-  /**
-   * Allow Deno to make requests to hosts with certificate errors.
-   */
-  unsafelyIgnoreCertificateErrors: boolean;
-
-  /**
-   * Specify the --location flag, which defines location.href. This must be a
-   * valid URL if provided.
-   */
-  location?: string;
-
-  /**
-   * The permissions that the Deno worker should use.
-   */
-  permissions: {
-    /**
-     * Whether to allow all permissions.
-     * Defaults to false.
-     */
-    allowAll?: boolean;
-
-    /**
-     * Whether to allow network connnections. If given a list of strings then
-     * only the specified origins/paths are allowed. Defaults to false.
-     */
-    allowNet?: boolean | string[];
-
-    /**
-     * Disable network access to provided IP addresses or hostnames. Any
-     * addresses specified here will be denied access, even if they are
-     * specified in `allowNet`. Note that deno-vm needs a network connection
-     * between the host and the guest, so it's not possible to fully disable
-     * network access.
-     */
-    denyNet?: string[];
-
-    /**
-     * Whether to allow reading from the filesystem. If given a list of strings
-     * then only the specified file paths are allowed. Defaults to false.
-     */
-    allowRead?: boolean | string[];
-
-    /**
-     * Whether to allow writing to the filesystem. If given a list of strings
-     * then only the specified file paths are allowed. Defaults to false.
-     */
-    allowWrite?: boolean | string[];
-
-    /**
-     * Whether to allow reading environment variables. Defaults to false.
-     */
-    allowEnv?: boolean | string[];
-
-    /**
-     * Whether to allow running Deno plugins. Defaults to false.
-     */
-    allowPlugin?: boolean;
-
-    /**
-     * Whether to allow running subprocesses. Defaults to false.
-     */
-    allowRun?: boolean | string[];
-
-    /**
-     * Whether to allow high resolution time measurement. Defaults to false.
-     */
-    allowHrtime?: boolean;
-  };
+  printProcessArguments: boolean;
 
   /**
    * Options used to spawn the Deno child process
@@ -218,24 +63,24 @@ export const newDenoHTTPWorker = async (
   script: string | URL,
   options?: Partial<DenoWorkerOptions>
 ): Promise<DenoHTTPWorker> => {
-  const _options = Object.assign(
+  const _options: DenoWorkerOptions = Object.assign(
     {
       denoExecutable: "deno",
       denoBootstrapScriptPath: DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH,
-      reload: process.env.NODE_ENV !== "production",
-      denoUnstable: false,
-      location: undefined,
-      permissions: {},
-      denoV8Flags: [],
-      denoImportMapPath: "",
-      denoLockFilePath: "",
-      denoCachedOnly: false,
-      denoNoCheck: false,
-      unsafelyIgnoreCertificateErrors: false,
+      denoFlags: {},
+      printProcessArguments: false,
       spawnOptions: {},
+      printOutput: false,
     },
     options || {}
   );
+
+  // TODO: Let the host be user configurable?
+  // TODO: allow specifying --allow-net catchall
+  _options.denoFlags["--allow-net"] = [
+    "0.0.0.0:0",
+    ...(_options.denoFlags["--allow-net"] || []),
+  ];
 
   let scriptArgs: string[];
 
@@ -245,78 +90,27 @@ export const newDenoHTTPWorker = async (
     scriptArgs = ["import", script.href];
   }
 
-  let runArgs = [] as string[];
+  let runArgs: string[] = Object.keys(_options.denoFlags).map((key) => {
+    let value = _options.denoFlags[key];
+    return value ? `${key}=${value.join(",")}` : `${key}`;
+  });
 
-  // TODO: Let the host be user configurable?
-  let allowAddress = "0.0.0.0:0";
-
-  addOption(runArgs, "--reload", _options.reload);
-  if (_options.denoUnstable === true) {
-    runArgs.push("--unstable");
-  } else if (_options.denoUnstable) {
-    for (let [key] of Object.entries(_options.denoUnstable).filter(
-      ([_key, val]) => val
-    )) {
-      runArgs.push(
-        `--unstable-${key.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase())}`
-      );
-    }
-  }
-  addOption(runArgs, "--cached-only", _options.denoCachedOnly);
-  addOption(runArgs, "--no-check", _options.denoNoCheck);
-  addOption(
-    runArgs,
-    "--unsafely-ignore-certificate-errors",
-    _options.unsafelyIgnoreCertificateErrors
-  );
-  if (_options.location) {
-    addOption(runArgs, "--location", [_options.location]);
+  let command = "deno";
+  if (typeof _options.denoExecutable === "string") {
+    command = _options.denoExecutable;
   }
 
-  if (_options.denoV8Flags.length > 0) {
-    addOption(runArgs, "--v8-flags", _options.denoV8Flags);
+  if (Array.isArray(_options.denoExecutable)) {
+    if (_options.denoExecutable.length === 0)
+      throw new Error("denoExecutable must not be empty");
+
+    command = _options.denoExecutable[0]!;
+    runArgs = [..._options.denoExecutable.slice(1), ...runArgs];
   }
 
-  if (_options.denoImportMapPath) {
-    addOption(runArgs, "--import-map", [_options.denoImportMapPath]);
-  }
-
-  if (_options.denoLockFilePath) {
-    addOption(runArgs, "--lock", [_options.denoLockFilePath]);
-  }
-
-  if (_options.permissions) {
-    addOption(runArgs, "--allow-all", _options.permissions.allowAll);
-    if (!_options.permissions.allowAll) {
-      addOption(
-        runArgs,
-        "--allow-net",
-        typeof _options.permissions.allowNet === "boolean"
-          ? _options.permissions.allowNet
-          : _options.permissions.allowNet
-          ? [..._options.permissions.allowNet, allowAddress]
-          : [allowAddress]
-      );
-      // Ensures the `allowAddress` isn't denied
-      const deniedAddresses = _options.permissions.denyNet?.filter(
-        (address) => address !== allowAddress
-      );
-      addOption(
-        runArgs,
-        "--deny-net",
-        // Ensures an empty array isn't used
-        deniedAddresses?.length ? deniedAddresses : false
-      );
-      addOption(runArgs, "--allow-read", _options.permissions.allowRead);
-      addOption(runArgs, "--allow-write", _options.permissions.allowWrite);
-      addOption(runArgs, "--allow-env", _options.permissions.allowEnv);
-      addOption(runArgs, "--allow-plugin", _options.permissions.allowPlugin);
-      addOption(runArgs, "--allow-hrtime", _options.permissions.allowHrtime);
-    }
-  }
   return new Promise((resolve, reject) => {
     const process = spawn(
-      _options.denoExecutable,
+      command,
       ["run", ...runArgs, _options.denoBootstrapScriptPath, ...scriptArgs],
       _options.spawnOptions
     );
@@ -427,6 +221,7 @@ export const newDenoHTTPWorker = async (
 
         worker = new DenoHTTPWorker(
           _httpSession,
+          port,
           _got,
           process,
           stdout,
@@ -444,6 +239,7 @@ export type { DenoHTTPWorker };
 class DenoHTTPWorker {
   private _httpSession: http2.ClientHttp2Session;
   private _got: Got;
+  private _denoListeningPort: number;
   private _process: ChildProcess;
   private _stdout: Readable;
   private _stderr: Readable;
@@ -451,12 +247,14 @@ class DenoHTTPWorker {
 
   constructor(
     httpSession: http2.ClientHttp2Session,
+    denoListeningPort: number,
     got: Got,
     process: ChildProcess,
     stdout: Readable,
     stderr: Readable
   ) {
     this._httpSession = httpSession;
+    this._denoListeningPort = denoListeningPort;
     this._got = got;
     this._process = process;
     this._stdout = stdout;
@@ -485,6 +283,10 @@ class DenoHTTPWorker {
 
   get stderr() {
     return this._stderr;
+  }
+
+  get denoListeningPort(): number {
+    return this._denoListeningPort;
   }
   /**
    * Represents an event handler for the "exit" event. That is, a function to be
