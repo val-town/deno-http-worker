@@ -1,6 +1,6 @@
 export default async function (req: Request): Promise<Response> {
-  let headers: { [key: string]: string } = {};
-  for (let [key, value] of req.headers.entries()) {
+  const headers: { [key: string]: string } = {};
+  for (const [key, value] of req.headers.entries()) {
     headers[key] = value;
   }
   return Response.json({

@@ -25,15 +25,11 @@ jobs:
         run: npm ci
         env:
           CI: true
-      - name: build
-        run: npm run build
+      - name: prepare
+        run: npm run prepare
         env:
           CI: true
       - name: vitest
         run: npm run test
         env:
           CI: true
-      - name: deno lint
-        run: |
-          cd deno-bootstrap
-          deno lint

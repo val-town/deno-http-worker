@@ -4,6 +4,8 @@ import { Readable, Writable, TransformCallback, Transform } from "stream";
 import readline from "readline";
 import http2 from "http2-wrapper";
 import got, { Got } from "got";
+import fs from "fs/promises";
+import net from "net";
 
 import { fileURLToPath } from "url";
 
@@ -20,10 +22,9 @@ const DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH = __dirname.endsWith("src")
 export interface DenoWorkerOptions {
   /**
    * The path to the executable that should be use when spawning the subprocess.
-   * Defaults to "deno". You can pass an array here if you want to invoke Deno
-   * with multiple arguments, like `sandbox run deno`.
+   * Defaults to "deno".
    */
-  denoExecutable: string | string[];
+  denoExecutable: string;
 
   /**
    * The path to the script that should be used to bootstrap the worker
@@ -64,70 +65,64 @@ export interface DenoWorkerOptions {
 
 export const newDenoHTTPWorker = async (
   script: string | URL,
-  options?: Partial<DenoWorkerOptions>
+  options: Partial<DenoWorkerOptions> = {}
 ): Promise<DenoHTTPWorker> => {
-  const _options: DenoWorkerOptions = Object.assign(
-    {
-      denoExecutable: "deno",
-      denoBootstrapScriptPath: DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH,
-      runFlags: [],
-      printCommandAndArguments: false,
-      spawnOptions: {},
-      printOutput: false,
-    },
-    options || {}
-  );
-
-  let networkingIsOk = false;
-  _options.runFlags = _options.runFlags.map((flag) => {
-    if (flag === "--allow-net" || flag === "--allow-all") {
-      networkingIsOk = true;
-    }
-    if (flag === "--deny-net") {
-      throw new Error(
-        "Using --deny-net without specifying specific addresses is not supported"
-      );
-    }
-    if (flag.startsWith("--deny-net") && flag.includes(LISTENING_HOSTPORT)) {
-      throw new Error(
-        `Using --deny-net with the address ${LISTENING_HOSTPORT} is not supported`
-      );
-    }
-    if (flag.startsWith("--allow-net=")) {
-      networkingIsOk = true;
-      return (flag += "," + LISTENING_HOSTPORT);
-    }
-    return flag;
-  });
-  if (!networkingIsOk) {
-    _options.runFlags.push("--allow-net=" + LISTENING_HOSTPORT);
-  }
+  const _options: DenoWorkerOptions = {
+    denoExecutable: "deno",
+    denoBootstrapScriptPath: DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH,
+    runFlags: [],
+    printCommandAndArguments: false,
+    spawnOptions: {},
+    printOutput: false,
+    ...options,
+  };
 
   let scriptArgs: string[];
 
+  // Create the socket location that we'll use to communicate with Deno.
+  const socketFile = `${crypto.randomUUID()}-deno-http.sock`;
+
+  // If we have a file import, make sure we allow read access to the file.
+  const allowReadFlagValue =
+    typeof script === "string"
+      ? socketFile
+      : `${socketFile},${script.href.replace("file://", "")}`;
+
+  let allowReadFound = false;
+  let allowWriteFound = false;
+  _options.runFlags = _options.runFlags.map((flag) => {
+    if (flag === "--allow-read" || flag === "--allow-all") {
+      allowReadFound = true;
+    }
+    if (flag === "--allow-write" || flag === "--allow-all") {
+      allowWriteFound = true;
+    }
+    if (flag.startsWith("--allow-read=")) {
+      allowReadFound = true;
+      return (flag += "," + allowReadFlagValue);
+    }
+    if (flag.startsWith("--allow-write=")) {
+      allowWriteFound = true;
+      return (flag += "," + socketFile);
+    }
+    return flag;
+  });
+  if (!allowReadFound) {
+    _options.runFlags.push("--allow-read=" + allowReadFlagValue);
+  }
+  if (!allowWriteFound) {
+    _options.runFlags.push("--allow-write=" + socketFile);
+  }
+
   if (typeof script === "string") {
-    scriptArgs = ["script", script];
+    scriptArgs = [socketFile, "script", script];
   } else {
-    scriptArgs = ["import", script.href];
+    scriptArgs = [socketFile, "import", script.href];
   }
 
-  let command = "deno";
-  if (typeof _options.denoExecutable === "string") {
-    command = _options.denoExecutable;
-  }
+  const command = _options.denoExecutable;
 
-  if (Array.isArray(_options.denoExecutable)) {
-    if (_options.denoExecutable.length === 0)
-      throw new Error("denoExecutable must not be empty");
-
-    command = _options.denoExecutable[0]!;
-    _options.runFlags = [
-      ..._options.denoExecutable.slice(1),
-      ..._options.runFlags,
-    ];
-  }
-
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     const args = [
       "run",
       ..._options.runFlags,
@@ -135,12 +130,14 @@ export const newDenoHTTPWorker = async (
       ...scriptArgs,
     ];
     if (_options.printCommandAndArguments) {
-      console.log("Spawning deno process:", JSON.stringify([command, ...args]));
+      console.log("Spawning deno process:", [command, ...args]);
     }
     const process = spawn(command, args, _options.spawnOptions);
     let running = false;
+    let exited = false;
     let worker: DenoHTTPWorker;
     process.on("exit", (code: number, signal: string) => {
+      exited = true;
       if (!running) {
         let stderr = process.stderr?.read()?.toString();
         reject(
@@ -149,6 +146,7 @@ export const newDenoHTTPWorker = async (
               (stderr ? `\n${stderr}` : "")
           )
         );
+        fs.rm(socketFile);
       } else {
         worker.terminate(code, signal);
       }
@@ -157,113 +155,100 @@ export const newDenoHTTPWorker = async (
     const stdout = <Readable>process.stdout;
     const stderr = <Readable>process.stderr;
 
-    const onReadable = () => {
-      // We wait for stdout to be readable and then just read the bytes of the
-      // port number log line. If a user subscribes to the reader later they'll
-      // only see log output without the port line.
-
-      // Length is: DENO_PORT_LOG_PREFIX + " " + port + padding + " " + newline
-      let data = stdout.read(DENO_PORT_LOG_PREFIX.length + 1 + 5 + 1 + 1);
-      stdout.removeListener("readable", onReadable);
-      let strData = data.toString();
-      if (!strData.startsWith(DENO_PORT_LOG_PREFIX)) {
-        reject(
-          new Error(
-            "First log output from deno process did not contain the expected port value"
-          )
-        );
-        return;
-      }
-
-      const match = strData.match(/deno-listening-port +(\d+) /);
-      if (!match) {
-        reject(
-          new Error(
-            `First log output from deno process did not contain a valid port value: "${data}"`
-          )
-        );
-        return;
-      }
-      const port = match[1];
-      const _httpSession = http2.connect(`http://localhost:${port}`);
-      _httpSession.on("error", (err) => {
-        if (!running) {
-          reject(err);
-        } else {
-          worker.terminate();
-          throw err;
-        }
+    if (_options.printOutput) {
+      readline.createInterface({ input: stdout }).on("line", (line) => {
+        console.log("[deno]", line);
       });
-      _httpSession.on("connect", () => {
-        const _got = got.extend({
-          hooks: {
-            beforeRequest: [
-              (options) => {
-                // Ensure that we use our existing session
-                options.h2session = _httpSession;
-                options.http2 = true;
-
-                // We follow got's example here:
-                // https://github.com/sindresorhus/got/blob/88e623a0d8140e02eef44d784f8d0327118548bc/documentation/examples/h2c.js#L32-L34
-                // But, this still surfaces a type error for various
-                // differences between the implementation. Ignoring for now.
-                //
-                // @ts-ignore
-                options.request = http2.request;
-
-                // Ensure the got user-agent string is never present. If a
-                // value is passed by the user it will override got's
-                // default value.
-                if (
-                  options.headers["user-agent"] ===
-                  "got (https://github.com/sindresorhus/got)"
-                ) {
-                  delete options.headers["user-agent"];
-                }
-
-                // Got will block requests that have a scheme of https and
-                // will also add a :443 port when not port exists. We pass
-                // the parts of the url that we care about in headers so
-                // that we can successfully assemble the request on the
-                // other side.
-                if (typeof options.url === "string") {
-                  options.url = new URL(options.url);
-                }
-                options.headers = {
-                  ...options.headers,
-                  "X-Deno-Worker-Host": options.url?.host,
-                  "X-Deno-Worker-Port": options.url?.port,
-                  "X-Deno-Worker-Protocol": options.url?.protocol,
-                };
-                if (options.url && options.url?.protocol === "https:") {
-                  options.url.protocol = "http:";
-                }
-              },
-            ],
-          },
-        });
-        if (_options.printOutput) {
-          readline.createInterface({ input: stdout }).on("line", (line) => {
-            console.log("[deno]", line);
-          });
-          readline.createInterface({ input: stderr }).on("line", (line) => {
-            console.error("[deno]", line);
-          });
-        }
-
-        worker = new DenoHTTPWorker(
-          _httpSession,
-          port,
-          _got,
-          process,
-          stdout,
-          stderr
-        );
-        running = true;
-        resolve(worker);
+      readline.createInterface({ input: stderr }).on("line", (line) => {
+        console.error("[deno]", line);
       });
-    };
-    stdout.on("readable", onReadable);
+    }
+
+    // Wait for the socket file to be created by the Deno process.
+    while (true) {
+      if (exited) {
+        break;
+      }
+      try {
+        await fs.stat(socketFile);
+        // File exists
+        break;
+      } catch (err) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+
+    const _httpSession = http2.connect(`http://whatever`, {
+      createConnection: () => net.connect(socketFile),
+    });
+    _httpSession.on("error", (err) => {
+      if (!running) {
+        reject(err);
+      } else {
+        worker.terminate();
+        throw err;
+      }
+    });
+    _httpSession.on("connect", () => {
+      const _got = got.extend({
+        hooks: {
+          beforeRequest: [
+            (options) => {
+              // Ensure that we use our existing session
+              options.h2session = _httpSession;
+              options.http2 = true;
+
+              // We follow Got's example here:
+              // https://github.com/sindresorhus/got/blob/88e623a0d8140e02eef44d784f8d0327118548bc/documentation/examples/h2c.js#L32-L34
+              // But, this still surfaces a type error for various
+              // differences between the implementation. Ignoring for now.
+              //
+              // @ts-ignore
+              options.request = http2.request;
+
+              // Ensure the Got user-agent string is never present. If a
+              // value is passed by the user it will override got's
+              // default value.
+              if (
+                options.headers["user-agent"] ===
+                "got (https://github.com/sindresorhus/got)"
+              ) {
+                delete options.headers["user-agent"];
+              }
+
+              // Got will block requests that have a scheme of https and
+              // will also add a :443 port when not port exists. We pass
+              // the parts of the url that we care about in headers so
+              // that we can successfully assemble the request on the
+              // other side.
+              if (typeof options.url === "string") {
+                options.url = new URL(options.url);
+              }
+              options.headers = {
+                ...options.headers,
+                "X-Deno-Worker-Host": options.url?.host,
+                "X-Deno-Worker-Port": options.url?.port,
+                "X-Deno-Worker-Protocol": options.url?.protocol,
+              };
+              if (options.url && options.url?.protocol === "https:") {
+                options.url.protocol = "http:";
+              }
+            },
+          ],
+        },
+      });
+
+      worker = new DenoHTTPWorker(
+        _httpSession,
+        socketFile,
+        _got,
+        process,
+        stdout,
+        stderr
+      );
+      running = true;
+      resolve(worker);
+    });
   });
 };
 export type { DenoHTTPWorker };
@@ -271,7 +256,7 @@ export type { DenoHTTPWorker };
 class DenoHTTPWorker {
   #httpSession: http2.ClientHttp2Session;
   #got: Got;
-  #denoListeningPort: number;
+  #socketFile: string;
   #process: ChildProcess;
   #stdout: Readable;
   #stderr: Readable;
@@ -279,14 +264,14 @@ class DenoHTTPWorker {
 
   constructor(
     httpSession: http2.ClientHttp2Session,
-    denoListeningPort: number,
+    socketFile: string,
     got: Got,
     process: ChildProcess,
     stdout: Readable,
     stderr: Readable
   ) {
     this.#httpSession = httpSession;
-    this.#denoListeningPort = denoListeningPort;
+    this.#socketFile = socketFile;
     this.#got = got;
     this.#process = process;
     this.#stdout = stdout;
@@ -296,16 +281,19 @@ class DenoHTTPWorker {
   get client(): Got {
     return this.#got;
   }
+
   terminate(code?: number, signal?: string) {
     if (this.#terminated) {
       return;
     }
-    this.onexit(code || this.#process.exitCode || 0, signal || "");
     this.#terminated = true;
+    this.onexit(code || this.#process.exitCode || 0, signal || "");
     if (this.#process && this.#process.exitCode === null) {
-      // TODO: is this preventing listening on SIGINT for cleanup? Do we care?
+      // TODO: do we need to SIGINT first to make sure we allow the process to do
+      // any cleanup?
       forceKill(this.#process.pid!);
     }
+    fs.rm(this.#socketFile);
     this.#httpSession.close();
   }
 
@@ -317,9 +305,6 @@ class DenoHTTPWorker {
     return this.#stderr;
   }
 
-  get denoListeningPort(): number {
-    return this.#denoListeningPort;
-  }
   /**
    * Represents an event handler for the "exit" event. That is, a function to be
    * called when the Deno worker process is terminated.
@@ -327,38 +312,12 @@ class DenoHTTPWorker {
   onexit: (code: number, signal: string) => void = () => {};
 }
 
-function addOption(
-  list: string[],
-  name: string,
-  option: boolean | string[] | undefined
-) {
-  if (option === true) {
-    list.push(`${name}`);
-  } else if (Array.isArray(option)) {
-    let values = option.join(",");
-    list.push(`${name}=${values}`);
-  }
-}
-
 /**
  * Forcefully kills the process with the given ID.
  * On Linux/Unix, this means sending the process the SIGKILL signal.
- * On Windows, this means using the taskkill executable to kill the process.
- * @param pid The ID of the process to kill.
  */
 export function forceKill(pid: number) {
-  // TODO: do we need to SIGINT first to make sure we allow the process to do
-  // any cleanup?
-  const isWindows = /^win/.test(process.platform);
-  if (isWindows) {
-    return killWindows(pid);
-  } else {
-    return killUnix(pid);
-  }
-}
-
-function killWindows(pid: number) {
-  execSync(`taskkill /PID ${pid} /T /F`);
+  return killUnix(pid);
 }
 
 function killUnix(pid: number) {
