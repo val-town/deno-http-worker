@@ -19,6 +19,10 @@ const DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH = __dirname.endsWith("src")
   ? resolve(__dirname, "../deno-bootstrap/index.ts")
   : resolve(__dirname, "../../deno-bootstrap/index.ts");
 
+interface OnExitListener {
+  (exitCode: number, signal: string): void;
+}
+
 export interface DenoWorkerOptions {
   /**
    * The path to the executable that should be use when spawning the subprocess.
@@ -254,12 +258,13 @@ export const newDenoHTTPWorker = async (
 export type { DenoHTTPWorker };
 
 class DenoHTTPWorker {
-  #httpSession: http2.ClientHttp2Session;
   #got: Got;
-  #socketFile: string;
+  #httpSession: http2.ClientHttp2Session;
+  #onexitListeners: OnExitListener[];
   #process: ChildProcess;
-  #stdout: Readable;
+  #socketFile: string;
   #stderr: Readable;
+  #stdout: Readable;
   #terminated: Boolean = false;
 
   constructor(
@@ -270,12 +275,13 @@ class DenoHTTPWorker {
     stdout: Readable,
     stderr: Readable
   ) {
-    this.#httpSession = httpSession;
-    this.#socketFile = socketFile;
     this.#got = got;
+    this.#httpSession = httpSession;
+    this.#onexitListeners = [];
     this.#process = process;
-    this.#stdout = stdout;
+    this.#socketFile = socketFile;
     this.#stderr = stderr;
+    this.#stdout = stdout;
   }
 
   get client(): Got {
@@ -287,14 +293,24 @@ class DenoHTTPWorker {
       return;
     }
     this.#terminated = true;
-    this.onexit(code || this.#process.exitCode || 0, signal || "");
     if (this.#process && this.#process.exitCode === null) {
       // TODO: do we need to SIGINT first to make sure we allow the process to do
       // any cleanup?
       forceKill(this.#process.pid!);
     }
-    fs.rm(this.#socketFile);
     this.#httpSession.close();
+    fs.rm(this.#socketFile);
+    for (let onexit of this.#onexitListeners) {
+      onexit(code ?? 1, signal ?? "");
+    }
+  }
+
+  /**
+   * Gracefully shuts down the worker process and waits for any unresolved
+   * promises to exit.
+   */
+  shutdown() {
+    this.#process.kill("SIGINT");
   }
 
   get stdout() {
@@ -306,10 +322,13 @@ class DenoHTTPWorker {
   }
 
   /**
-   * Represents an event handler for the "exit" event. That is, a function to be
-   * called when the Deno worker process is terminated.
+   * Adds the given listener for the "exit" event.
+   * @param type The type of the event. (Always "exit")
+   * @param listener The listener to add for the event.
    */
-  onexit: (code: number, signal: string) => void = () => {};
+  addEventListener(type: "exit", listener: OnExitListener): void {
+    this.#onexitListeners.push(listener as OnExitListener);
+  }
 }
 
 /**

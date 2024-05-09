@@ -41,6 +41,37 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.terminate();
   });
 
+  it("shutdown gracefully", async () => {
+    let worker = await newDenoHTTPWorker(
+      `
+        export default async function (req: Request): Promise<Response> {
+          new Promise((resolve) => setTimeout(() => {resolve(); console.log("hi")}, 200));
+          return Response.json({ ok: req.url })
+        }
+      `,
+      { printOutput: true }
+    );
+
+    let logs = "";
+    worker.stderr.on("data", (data) => (logs += data));
+    worker.stdout.on("data", (data) => (logs += data));
+
+    await new Promise<void>(async (resolve) => {
+      worker.addEventListener("exit", (code, signal) => {
+        expect(code).toEqual(0);
+        expect(logs).toContain("hi");
+        resolve();
+      });
+      let json = await worker.client
+        .get("https://localhost/hello?isee=you", { headers: {} })
+        .json();
+      expect(json).toEqual({
+        ok: "https://localhost/hello?isee=you",
+      });
+      worker.shutdown();
+    });
+  });
+
   describe("runFlags editing", () => {
     it.each([
       "--allow-read",
