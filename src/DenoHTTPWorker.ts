@@ -294,8 +294,6 @@ class DenoHTTPWorker {
     }
     this.#terminated = true;
     if (this.#process && this.#process.exitCode === null) {
-      // TODO: do we need to SIGINT first to make sure we allow the process to do
-      // any cleanup?
       forceKill(this.#process.pid!);
     }
     this.#httpSession.close();
