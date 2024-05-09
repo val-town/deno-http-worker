@@ -15,9 +15,10 @@ const __dirname = path.dirname(__filename);
 const DENO_PORT_LOG_PREFIX = "deno-listening-port";
 const LISTENING_HOSTPORT = "0.0.0.0:0";
 
-const DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH = __dirname.endsWith("src")
-  ? resolve(__dirname, "../deno-bootstrap/index.ts")
-  : resolve(__dirname, "../../deno-bootstrap/index.ts");
+const DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH = resolve(
+  __dirname,
+  "../deno-bootstrap/index.ts"
+);
 
 interface OnExitListener {
   (exitCode: number, signal: string): void;
