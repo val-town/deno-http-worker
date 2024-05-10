@@ -184,7 +184,7 @@ export const newDenoHTTPWorker = async (
         );
         fs.rm(socketFile);
       } else {
-        worker._terminate(code, signal);
+        (worker as denoHTTPWorker)._terminate(code, signal);
       }
     });
 
@@ -294,7 +294,7 @@ export interface DenoHTTPWorker {
    * Terminate the worker. This kills the process with SIGKILL if it is still
    * running, closes the http2 connection, and deletes the socket file.
    */
-  terminate(code?: number, signal?: string): void;
+  terminate(): void;
 
   /**
    * Gracefully shuts down the worker process and waits for any unresolved
