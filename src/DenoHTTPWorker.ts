@@ -145,11 +145,14 @@ export const newDenoHTTPWorker = async (
       exited = true;
       if (!running) {
         let stderr = process.stderr?.read()?.toString();
+        let stdout = process.stdout?.read()?.toString();
         reject(
-          new Error(
-            `Deno process exited before it was ready: code: ${code}, signal: ${signal}` +
-              (stderr ? `\n${stderr}` : "")
-          )
+          Object.assign(new Error("Deno exited before being ready"), {
+            stderr,
+            stdout,
+            code,
+            signal,
+          })
         );
         fs.rm(socketFile);
       } else {
@@ -199,6 +202,9 @@ export const newDenoHTTPWorker = async (
         hooks: {
           beforeRequest: [
             (options) => {
+              // Do not automatically retry.
+              options.retry.limit = 0;
+
               // Ensure that we use our existing session
               options.h2session = _httpSession;
               options.http2 = true;
