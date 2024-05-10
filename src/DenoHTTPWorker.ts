@@ -202,8 +202,12 @@ export const newDenoHTTPWorker = async (
         hooks: {
           beforeRequest: [
             (options) => {
-              // Do not automatically retry.
+              // Remove features that modify or respond differently to certain
+              // request
               options.retry.limit = 0;
+              options.followRedirect = false;
+              options.throwHttpErrors = false;
+              options.cookieJar = undefined;
 
               // Ensure that we use our existing session
               options.h2session = _httpSession;
