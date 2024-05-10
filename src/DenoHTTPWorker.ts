@@ -3,6 +3,7 @@ import { ChildProcess, spawn, SpawnOptions, execSync } from "child_process";
 import { Readable, Writable, TransformCallback, Transform } from "stream";
 import readline from "readline";
 import http2 from "http2-wrapper";
+import http from "http";
 import got, { Got } from "got";
 import fs from "fs/promises";
 import net from "net";
@@ -68,6 +69,33 @@ export interface DenoWorkerOptions {
   spawnOptions: SpawnOptions;
 }
 
+// http2-wrapper will block requests that have a scheme of https and will also
+// add a :443 port when not port exists. We pass the parts of the url that we
+// care about in headers so that we can successfully assemble the request on the
+// other side.
+const patchRequestURL = (
+  url: string | URL
+): { url: URL; headers: { [key: string]: string } } => {
+  if (typeof url === "string") {
+    url = new URL(url);
+  }
+  let proto = url.protocol;
+  if (proto === "https:") {
+    url.protocol = "http:";
+  }
+  return {
+    url: url,
+    headers: {
+      "X-Deno-Worker-Host": url.host,
+      "X-Deno-Worker-Port": url.port,
+      "X-Deno-Worker-Protocol": proto,
+    },
+  };
+};
+
+/**
+ * Create a new DenoHTTPWorker. This function will start a worker and being
+ */
 export const newDenoHTTPWorker = async (
   script: string | URL,
   options: Partial<DenoWorkerOptions> = {}
@@ -156,7 +184,7 @@ export const newDenoHTTPWorker = async (
         );
         fs.rm(socketFile);
       } else {
-        worker.terminate(code, signal);
+        worker._terminate(code, signal);
       }
     });
 
@@ -231,29 +259,18 @@ export const newDenoHTTPWorker = async (
                 delete options.headers["user-agent"];
               }
 
-              // Got will block requests that have a scheme of https and
-              // will also add a :443 port when not port exists. We pass
-              // the parts of the url that we care about in headers so
-              // that we can successfully assemble the request on the
-              // other side.
-              if (typeof options.url === "string") {
-                options.url = new URL(options.url);
-              }
+              let { url, headers } = patchRequestURL(options.url || "");
+              options.url = url;
               options.headers = {
                 ...options.headers,
-                "X-Deno-Worker-Host": options.url?.host,
-                "X-Deno-Worker-Port": options.url?.port,
-                "X-Deno-Worker-Protocol": options.url?.protocol,
+                ...headers,
               };
-              if (options.url && options.url?.protocol === "https:") {
-                options.url.protocol = "http:";
-              }
             },
           ],
         },
       });
 
-      worker = new DenoHTTPWorker(
+      worker = new denoHTTPWorker(
         _httpSession,
         socketFile,
         _got,
@@ -266,9 +283,53 @@ export const newDenoHTTPWorker = async (
     });
   });
 };
-export type { DenoHTTPWorker };
 
-class DenoHTTPWorker {
+export interface DenoHTTPWorker {
+  /**
+   * A Got client that can be used to communicate with the worker.
+   */
+  get client(): Got;
+
+  /**
+   * Terminate the worker. This kills the process with SIGKILL if it is still
+   * running, closes the http2 connection, and deletes the socket file.
+   */
+  terminate(code?: number, signal?: string): void;
+
+  /**
+   * Gracefully shuts down the worker process and waits for any unresolved
+   * promises to exit.
+   */
+  shutdown(): void;
+
+  /**
+   * The underlying http2 connection to the unix socket that we use to
+   * communicate with Deno. This is for advanced use, you should use `client` or
+   * `request` to communicate with Deno.
+   */
+  get session(): http2.ClientHttp2Session;
+
+  /**
+   * request calls http2-wrapper.request but patches the options to work with
+   * our connection and safely handle rewriting various headers.
+   */
+  request(
+    url: string | URL,
+    options: http2.RequestOptions,
+    callback?: (response: http.IncomingMessage) => void
+  ): http.ClientRequest;
+
+  get stdout(): Readable;
+
+  get stderr(): Readable;
+
+  /**
+   * Adds the given listener for the "exit" event.
+   */
+  addEventListener(type: "exit", listener: OnExitListener): void;
+}
+
+class denoHTTPWorker {
   #got: Got;
   #httpSession: http2.ClientHttp2Session;
   #onexitListeners: OnExitListener[];
@@ -299,7 +360,7 @@ class DenoHTTPWorker {
     return this.#got;
   }
 
-  terminate(code?: number, signal?: string) {
+  _terminate(code?: number, signal?: string) {
     if (this.#terminated) {
       return;
     }
@@ -314,12 +375,28 @@ class DenoHTTPWorker {
     }
   }
 
-  /**
-   * Gracefully shuts down the worker process and waits for any unresolved
-   * promises to exit.
-   */
+  terminate() {
+    this._terminate();
+  }
+
   shutdown() {
     this.#process.kill("SIGINT");
+  }
+
+  get session() {
+    return this.#httpSession;
+  }
+
+  request(
+    url: string | URL,
+    options: http2.RequestOptions,
+    callback?: (response: http.IncomingMessage) => void
+  ) {
+    options.h2session = this.#httpSession;
+    let patched = patchRequestURL(url);
+    url = patched.url;
+    options.headers = { ...options.headers, ...patched.headers };
+    return http2.request(url, options, callback);
   }
 
   get stdout() {
@@ -330,11 +407,6 @@ class DenoHTTPWorker {
     return this.#stderr;
   }
 
-  /**
-   * Adds the given listener for the "exit" event.
-   * @param type The type of the event. (Always "exit")
-   * @param listener The listener to add for the event.
-   */
   addEventListener(type: "exit", listener: OnExitListener): void {
     this.#onexitListeners.push(listener as OnExitListener);
   }
@@ -344,7 +416,7 @@ class DenoHTTPWorker {
  * Forcefully kills the process with the given ID.
  * On Linux/Unix, this means sending the process the SIGKILL signal.
  */
-export function forceKill(pid: number) {
+function forceKill(pid: number) {
   return killUnix(pid);
 }
 
