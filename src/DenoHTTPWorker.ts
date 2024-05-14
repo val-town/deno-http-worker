@@ -8,6 +8,9 @@ import got, { Got } from "got";
 import fs from "fs/promises";
 import net from "net";
 
+import stream from "stream";
+import tls from "tls";
+
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -210,7 +213,7 @@ export const newDenoHTTPWorker = async (
         // File exists
         break;
       } catch (err) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await new Promise((resolve) => setTimeout(resolve, 20));
       }
     }
 
@@ -225,7 +228,7 @@ export const newDenoHTTPWorker = async (
         throw err;
       }
     });
-    _httpSession.on("connect", () => {
+    _httpSession.on("connect", async () => {
       const _got = got.extend({
         hooks: {
           beforeRequest: [
@@ -269,16 +272,29 @@ export const newDenoHTTPWorker = async (
           ],
         },
       });
+      try {
+        worker = new denoHTTPWorker(
+          _httpSession,
+          socketFile,
+          _got,
+          process,
+          stdout,
+          stderr
+        );
+        running = true;
 
-      worker = new denoHTTPWorker(
-        _httpSession,
-        socketFile,
-        _got,
-        process,
-        stdout,
-        stderr
-      );
-      running = true;
+        await new Promise<void>((resolve) => {
+          let req = worker.httpRequest("http://deno", {}, (resp) => {
+            resp.on("data", () => {});
+            resp.on("close", () => {
+              resolve();
+            });
+          });
+          req.end();
+        });
+      } catch (e) {
+        reject(e);
+      }
       resolve(worker);
     });
   });
@@ -309,6 +325,12 @@ export interface DenoHTTPWorker {
    */
   get session(): http2.ClientHttp2Session;
 
+  httpRequest(
+    url: string | URL,
+    options: http.RequestOptions,
+    callback: (response: http.IncomingMessage) => void
+  ): http.ClientRequest;
+
   /**
    * request calls http2-wrapper.request but patches the options to work with
    * our connection and safely handle rewriting various headers.
@@ -329,6 +351,17 @@ export interface DenoHTTPWorker {
   addEventListener(type: "exit", listener: OnExitListener): void;
 }
 
+class thisAgent extends http.Agent {
+  constructor(options: http.AgentOptions) {
+    super(options);
+  }
+  createConnection(options, callback) {
+    // console.log(options);
+    // console.log(Object.keys(super.freeSockets || {}));
+    return super.createConnection(options, callback);
+  }
+}
+
 class denoHTTPWorker {
   #got: Got;
   #httpSession: http2.ClientHttp2Session;
@@ -338,6 +371,7 @@ class denoHTTPWorker {
   #stderr: Readable;
   #stdout: Readable;
   #terminated: Boolean = false;
+  #agent: http.Agent;
 
   constructor(
     httpSession: http2.ClientHttp2Session,
@@ -354,6 +388,7 @@ class denoHTTPWorker {
     this.#socketFile = socketFile;
     this.#stderr = stderr;
     this.#stdout = stdout;
+    this.#agent = new thisAgent({ keepAlive: true });
   }
 
   get client(): Got {
@@ -387,12 +422,28 @@ class denoHTTPWorker {
     return this.#httpSession;
   }
 
+  httpRequest(
+    url: string | URL,
+    options: http.RequestOptions,
+    callback: (response: http.IncomingMessage) => void
+  ): http.ClientRequest {
+    options.headers = {
+      ...options.headers,
+      "X-Deno-Worker-URL": typeof url === "string" ? url : url.toString(),
+    };
+    url = "http://deno";
+    options.agent = this.#agent;
+    options.socketPath = this.#socketFile;
+    return http.request(url, options, callback);
+  }
+
   request(
     url: string | URL,
     options: http2.RequestOptions,
     callback?: (response: http.IncomingMessage) => void
   ) {
     options.h2session = this.#httpSession;
+    // options.h2session = this.#httpSession;
     let patched = patchRequestURL(url);
     url = patched.url;
     options.headers = { ...options.headers, ...patched.headers };

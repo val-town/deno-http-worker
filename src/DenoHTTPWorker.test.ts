@@ -1,19 +1,34 @@
-import { it as _it, describe, expect } from "vitest";
+import { it as _it, beforeAll, describe, expect } from "vitest";
 import { newDenoHTTPWorker } from "./index.js";
 import fs from "fs";
 import path from "path";
 import http2 from "http2-wrapper";
 
 // Uncomment this if you want to debug serial test execution
-const it = _it.concurrent;
-// const it =   _it;
+// const it = _it.concurrent;
+const it = _it;
+
+const DEFAULT_HTTP_VAL = `export default async function (req: Request): Promise<Response> {
+  return Response.json({ ok: true })
+} `;
 
 describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   const echoFile = path.resolve(__dirname, "./test/echo-request.ts");
   const echoScript = fs.readFileSync(echoFile, { encoding: "utf-8" });
   const vtFile = path.resolve(__dirname, "./test/val-town.ts");
   const vtScript = fs.readFileSync(vtFile, { encoding: "utf-8" });
+  const vtHeaderFile = path.resolve(__dirname, "./test/val-town-header.ts");
+  const vtHeaderScript = fs.readFileSync(vtHeaderFile, { encoding: "utf-8" });
 
+  beforeAll(() => {
+    // Clean up sockets that might have been left around during terminated test
+    // runs.
+    fs.readdirSync(".").forEach((file) => {
+      if (path.basename(file).endsWith("-deno-http.sock")) {
+        fs.rmSync(file);
+      }
+    });
+  });
   it("json response multiple requests", async () => {
     let worker = await newDenoHTTPWorker(
       `
@@ -144,8 +159,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   });
 
   it("use http2 directly", async () => {
-    let worker = await newDenoHTTPWorker(echoScript);
-
+    let worker = await newDenoHTTPWorker(echoScript, { printOutput: true });
     const t0 = performance.now();
     let json = await new Promise((resolve) => {
       let req = worker.request("https://localhost/hi", {}, (resp) => {
@@ -159,13 +173,43 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       });
       req.end();
     });
-    console.log("Run time", performance.now() - t0);
+    console.log("http2 request time", performance.now() - t0);
     expect(json).toEqual({
       url: "https://localhost/hi",
       headers: {},
       body: "",
       method: "GET",
     });
+    worker.terminate();
+  });
+  it("use http directly", async () => {
+    let worker = await newDenoHTTPWorker(echoScript, { printOutput: true });
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    for (let i = 0; i < 2; i++) {
+      const t0 = performance.now();
+      let json = await new Promise((resolve) => {
+        let req = worker.httpRequest("http://localhost/hi", {}, (resp) => {
+          const body: any[] = [];
+          resp.on("data", (chunk) => {
+            body.push(chunk);
+          });
+          resp.on("end", () => {
+            resolve(JSON.parse(Buffer.concat(body).toString()));
+          });
+        });
+        req.end();
+      });
+      console.log("http request time", performance.now() - t0);
+      expect(json).toEqual({
+        url: "http://localhost/hi",
+        headers: { connection: "keep-alive", host: "localhost" },
+        body: "",
+        method: "GET",
+      });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     worker.terminate();
   });
 
@@ -188,21 +232,92 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   it("can implement val town", async () => {
     let worker = await newDenoHTTPWorker(vtScript, { printOutput: true });
 
+    const t0 = performance.now();
     let first = worker.client.post("https://localhost:8080/", {
-      body:
-        "data:text/tsx," +
-        encodeURIComponent(`export default async function (req: Request): Promise<Response> {
-        return Response.json({ ok: true })
-      } ${"///".repeat(8000)}`),
+      body: "data:text/tsx," + encodeURIComponent(DEFAULT_HTTP_VAL),
     });
     // We send a request to initialize and when the first request is in flight
     // we send another request
     let second = worker.client("https://foo.web.val.run");
 
     expect((await first).statusCode).toEqual(200);
-    await first.text();
+    expect(await first.text()).toEqual("vt-done");
     expect(await second.text()).toEqual('{"ok":true}');
+    console.log("double request got val: ", performance.now() - t0);
+    worker.terminate();
+  });
 
+  it("can implement val town with http2.request", async () => {
+    let worker = await newDenoHTTPWorker(vtScript, { printOutput: true });
+
+    const t0 = performance.now();
+    let initReq = new Promise((resolve) => {
+      const req = worker.request(
+        "http://vt",
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+          method: "POST",
+        },
+        (resp) => {
+          resolve(resp);
+        }
+      );
+      req.on("error", console.error);
+      req.write(`data:text/tsx,${encodeURIComponent(DEFAULT_HTTP_VAL)}`);
+      req.end();
+    });
+    let text = await new Promise((resolve) => {
+      let req = worker.request(
+        "https://localhost:1234",
+        { headers: { connection: "upgrade" } },
+        (resp) => {
+          const body: any[] = [];
+          resp.on("data", (chunk) => {
+            body.push(chunk);
+          });
+          resp.on("end", () => {
+            resolve(Buffer.concat(body).toString());
+          });
+        }
+      );
+      req.end();
+    });
+    expect(text).toEqual('{"ok":true}');
+    console.log("Double request http2 val:", performance.now() - t0);
+    // await initReq;
+    worker.terminate();
+  });
+  it("val town import header", async () => {
+    let worker = await newDenoHTTPWorker(vtHeaderScript, { printOutput: true });
+
+    const t0 = performance.now();
+    let text = await new Promise((resolve) => {
+      let req = worker.request(
+        "https://localhost:1234",
+        {
+          headers: {
+            "X-VT-Import": `data:text/tsx,${encodeURIComponent(
+              DEFAULT_HTTP_VAL
+            )}`,
+          },
+        },
+        (resp) => {
+          const body: any[] = [];
+          resp.on("data", (chunk) => {
+            body.push(chunk);
+          });
+          resp.on("end", () => {
+            resolve(Buffer.concat(body).toString());
+          });
+        }
+      );
+      req.end();
+    });
+    expect(text).toEqual('{"ok":true}');
+    console.log("single request:", performance.now() - t0);
+    // await initReq;
     worker.terminate();
   });
 });

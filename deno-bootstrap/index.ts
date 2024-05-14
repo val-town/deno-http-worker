@@ -19,20 +19,30 @@ if (typeof handler.default !== "function") {
 const server = Deno.serve(
   { path: socketFile, onListen: () => {} },
   (req: Request) => {
-    const url = new URL(req.url);
-    url.host = req.headers.get("X-Deno-Worker-Host") || url.host;
-    url.port = req.headers.get("X-Deno-Worker-Port") || url.port;
-    // Setting url.protocol did not replace the protocol correctly for a unix
-    // socket. Replacing the href value seems to work well.
-    url.href = url.href.replace(
-      /^http\+unix:/,
-      req.headers.get("X-Deno-Worker-Protocol") || url.protocol
-    );
+    console.log(req);
+    const hurl = req.headers.get("X-Deno-Worker-URL");
+    let url = new URL(req.url);
+    if (hurl) {
+      url = new URL(hurl);
+    } else {
+      url.host = req.headers.get("X-Deno-Worker-Host") || url.host;
+      if (url.host == "warm") {
+        return Response.json({});
+      }
+      url.port = req.headers.get("X-Deno-Worker-Port") || url.port;
+      // Setting url.protocol did not replace the protocol correctly for a unix
+      // socket. Replacing the href value seems to work well.
+      url.href = url.href.replace(
+        /^http\+unix:/,
+        req.headers.get("X-Deno-Worker-Protocol") || url.protocol
+      );
+    }
     // Deno Request headers are immutable so we must make a new Request in order to delete our headers
     req = new Request(url.toString(), req);
     req.headers.delete("X-Deno-Worker-Host");
     req.headers.delete("X-Deno-Worker-Protocol");
     req.headers.delete("X-Deno-Worker-Port");
+    req.headers.delete("X-Deno-Worker-URL");
 
     return handler.default(req);
   }
