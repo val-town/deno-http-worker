@@ -1,2 +1,5 @@
-export { newDenoHTTPWorker } from "./DenoHTTPWorker.js";
-export type { DenoHTTPWorker } from "./DenoHTTPWorker.js";
+export {
+  DenoHTTPWorker,
+  DenoWorkerOptions,
+  newDenoHTTPWorker,
+} from "./DenoHTTPWorker.js";

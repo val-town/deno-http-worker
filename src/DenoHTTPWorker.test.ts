@@ -2,6 +2,7 @@ import { it as _it, describe, expect } from "vitest";
 import { newDenoHTTPWorker } from "./index.js";
 import fs from "fs";
 import path from "path";
+import http2 from "http2-wrapper";
 
 // Uncomment this if you want to debug serial test execution
 const it = _it.concurrent;
@@ -39,6 +40,37 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       });
     }
     worker.terminate();
+  });
+
+  it("shutdown gracefully", async () => {
+    let worker = await newDenoHTTPWorker(
+      `
+        export default async function (req: Request): Promise<Response> {
+          new Promise((resolve) => setTimeout(() => {resolve(); console.log("hi")}, 200));
+          return Response.json({ ok: req.url })
+        }
+      `,
+      { printOutput: true }
+    );
+
+    let logs = "";
+    worker.stderr.on("data", (data) => (logs += data));
+    worker.stdout.on("data", (data) => (logs += data));
+
+    await new Promise<void>(async (resolve) => {
+      worker.addEventListener("exit", (code, signal) => {
+        expect(code).toEqual(0);
+        expect(logs).toContain("hi");
+        resolve();
+      });
+      let json = await worker.client
+        .get("https://localhost/hello?isee=you", { headers: {} })
+        .json();
+      expect(json).toEqual({
+        ok: "https://localhost/hello?isee=you",
+      });
+      worker.shutdown();
+    });
   });
 
   describe("runFlags editing", () => {
@@ -90,10 +122,13 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
 
   it("json response", async () => {
     let worker = await newDenoHTTPWorker(echoScript);
+
+    const t0 = performance.now();
     let resp = (await worker.client
       .post("https://localhost/", { json: { ok: true } })
       .json()) as any;
     expect(resp.body).toEqual('{"ok":true}');
+    console.log("Got time", performance.now() - t0);
 
     // TODO: test against streaming resp as well as request body
     let req = worker.client.post("https://localhost/", {
@@ -105,6 +140,32 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       fs.readFileSync(import.meta.url.replace("file://", "")).toString()
     );
 
+    worker.terminate();
+  });
+
+  it("use http2 directly", async () => {
+    let worker = await newDenoHTTPWorker(echoScript);
+
+    const t0 = performance.now();
+    let json = await new Promise((resolve) => {
+      let req = worker.request("https://localhost/hi", {}, (resp) => {
+        const body: any[] = [];
+        resp.on("data", (chunk) => {
+          body.push(chunk);
+        });
+        resp.on("end", () => {
+          resolve(JSON.parse(Buffer.concat(body).toString()));
+        });
+      });
+      req.end();
+    });
+    console.log("Run time", performance.now() - t0);
+    expect(json).toEqual({
+      url: "https://localhost/hi",
+      headers: {},
+      body: "",
+      method: "GET",
+    });
     worker.terminate();
   });
 
