@@ -19,37 +19,34 @@ if (typeof handler.default !== "function") {
 const server = Deno.serve(
   { path: socketFile, onListen: () => {} },
   (req: Request) => {
-    console.log(req);
-    const hurl = req.headers.get("X-Deno-Worker-URL");
-    let url = new URL(req.url);
-    if (hurl) {
-      url = new URL(hurl);
-    } else {
-      url.host = req.headers.get("X-Deno-Worker-Host") || url.host;
-      if (url.host == "warm") {
-        return Response.json({});
-      }
-      url.port = req.headers.get("X-Deno-Worker-Port") || url.port;
-      // Setting url.protocol did not replace the protocol correctly for a unix
-      // socket. Replacing the href value seems to work well.
-      url.href = url.href.replace(
-        /^http\+unix:/,
-        req.headers.get("X-Deno-Worker-Protocol") || url.protocol
-      );
+    const headerUrl = req.headers.get("X-Deno-Worker-URL");
+    if (!headerUrl) {
+      // This is just for the warming request, shouldn't be seen by clients.
+      return Response.json({}, { status: 401 });
     }
-    // Deno Request headers are immutable so we must make a new Request in order to delete our headers
+    let url = new URL(headerUrl);
+    // Deno Request headers are immutable so we must make a new Request in order
+    // to delete our headers.
     req = new Request(url.toString(), req);
-    req.headers.delete("X-Deno-Worker-Host");
-    req.headers.delete("X-Deno-Worker-Protocol");
-    req.headers.delete("X-Deno-Worker-Port");
-    req.headers.delete("X-Deno-Worker-URL");
 
+    // Restore host and connection headers.
+    req.headers.delete("host");
+    req.headers.delete("connection");
+    if (req.headers.has("X-Deno-Worker-Host"))
+      req.headers.set("host", req.headers.get("X-Deno-Worker-Host")!);
+    if (req.headers.has("X-Deno-Worker-Connection"))
+      req.headers.set(
+        "connection",
+        req.headers.get("X-Deno-Worker-Connection")!
+      );
+
+    req.headers.delete("X-Deno-Worker-URL");
     return handler.default(req);
   }
 );
 
 Deno.addSignalListener("SIGINT", async () => {
-  // On interrupt we only shut down the server. We will wait for all other
-  // unresolved promises before exiting.
+  // On interrupt we only shut down the server. Deno will wait for all
+  // unresolved promises to complete before exiting.
   await server.shutdown();
 });
