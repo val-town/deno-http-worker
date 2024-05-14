@@ -24,7 +24,7 @@ const server = Deno.serve(
       // This is just for the warming request, shouldn't be seen by clients.
       return Response.json({}, { status: 401 });
     }
-    let url = new URL(headerUrl);
+    const url = new URL(headerUrl);
     // Deno Request headers are immutable so we must make a new Request in order
     // to delete our headers.
     req = new Request(url.toString(), req);
