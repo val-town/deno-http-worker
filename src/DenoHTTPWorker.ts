@@ -1,13 +1,9 @@
 import path, { resolve } from "path";
-import { ChildProcess, spawn, SpawnOptions, execSync } from "child_process";
-import { Readable, Writable, TransformCallback, Transform } from "stream";
+import { ChildProcess, spawn, SpawnOptions } from "child_process";
+import { Readable } from "stream";
 import readline from "readline";
 import http from "http";
 import fs from "fs/promises";
-import net from "net";
-
-import stream from "stream";
-import tls from "tls";
 
 import { fileURLToPath } from "url";
 

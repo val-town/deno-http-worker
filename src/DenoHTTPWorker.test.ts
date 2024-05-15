@@ -2,10 +2,6 @@ import { it as _it, beforeAll, describe, expect } from "vitest";
 import { DenoHTTPWorker, newDenoHTTPWorker } from "./index.js";
 import fs from "fs";
 import path from "path";
-import http2 from "http2-wrapper";
-import { rejects } from "assert";
-import { a } from "vitest/dist/suite-ynYMzeLu.js";
-import { json } from "stream/consumers";
 
 // Uncomment this if you want to debug serial test execution
 // const it = _it.concurrent;
