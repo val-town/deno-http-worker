@@ -1,12 +1,9 @@
 import path, { resolve } from "path";
-import { ChildProcess, spawn, SpawnOptions, execSync } from "child_process";
-import { Readable, Writable, TransformCallback, Transform } from "stream";
+import { ChildProcess, spawn, SpawnOptions } from "child_process";
+import { Readable } from "stream";
 import readline from "readline";
-import http2 from "http2-wrapper";
 import http from "http";
-import got, { Got } from "got";
 import fs from "fs/promises";
-import net from "net";
 
 import { fileURLToPath } from "url";
 
@@ -68,30 +65,6 @@ export interface DenoWorkerOptions {
    */
   spawnOptions: SpawnOptions;
 }
-
-// http2-wrapper will block requests that have a scheme of https and will also
-// add a :443 port when not port exists. We pass the parts of the url that we
-// care about in headers so that we can successfully assemble the request on the
-// other side.
-const patchRequestURL = (
-  url: string | URL
-): { url: URL; headers: { [key: string]: string } } => {
-  if (typeof url === "string") {
-    url = new URL(url);
-  }
-  let proto = url.protocol;
-  if (proto === "https:") {
-    url.protocol = "http:";
-  }
-  return {
-    url: url,
-    headers: {
-      "X-Deno-Worker-Host": url.host,
-      "X-Deno-Worker-Port": url.port,
-      "X-Deno-Worker-Protocol": proto,
-    },
-  };
-};
 
 /**
  * Create a new DenoHTTPWorker. This function will start a worker and being
@@ -210,86 +183,22 @@ export const newDenoHTTPWorker = async (
         // File exists
         break;
       } catch (err) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await new Promise((resolve) => setTimeout(resolve, 20));
       }
     }
-
-    const _httpSession = http2.connect(`http://whatever`, {
-      createConnection: () => net.connect(socketFile),
-    });
-    _httpSession.on("error", (err) => {
-      if (!running) {
-        reject(err);
-      } else {
-        worker.terminate();
-        throw err;
-      }
-    });
-    _httpSession.on("connect", () => {
-      const _got = got.extend({
-        hooks: {
-          beforeRequest: [
-            (options) => {
-              // Remove features that modify or respond differently to certain
-              // request
-              options.retry.limit = 0;
-              options.followRedirect = false;
-              options.throwHttpErrors = false;
-              options.cookieJar = undefined;
-
-              // Ensure that we use our existing session
-              options.h2session = _httpSession;
-              options.http2 = true;
-
-              // We follow Got's example here:
-              // https://github.com/sindresorhus/got/blob/88e623a0d8140e02eef44d784f8d0327118548bc/documentation/examples/h2c.js#L32-L34
-              // But, this still surfaces a type error for various
-              // differences between the implementation. Ignoring for now.
-              //
-              // @ts-ignore
-              options.request = http2.request;
-
-              // Ensure the Got user-agent string is never present. If a
-              // value is passed by the user it will override got's
-              // default value.
-              if (
-                options.headers["user-agent"] ===
-                "got (https://github.com/sindresorhus/got)"
-              ) {
-                delete options.headers["user-agent"];
-              }
-
-              let { url, headers } = patchRequestURL(options.url || "");
-              options.url = url;
-              options.headers = {
-                ...options.headers,
-                ...headers,
-              };
-            },
-          ],
-        },
-      });
-
-      worker = new denoHTTPWorker(
-        _httpSession,
-        socketFile,
-        _got,
-        process,
-        stdout,
-        stderr
-      );
+    try {
+      worker = new denoHTTPWorker(socketFile, process, stdout, stderr);
       running = true;
+      await (worker as denoHTTPWorker).warmRequest();
+
       resolve(worker);
-    });
+    } catch (e) {
+      reject(e);
+    }
   });
 };
 
 export interface DenoHTTPWorker {
-  /**
-   * A Got client that can be used to communicate with the worker.
-   */
-  get client(): Got;
-
   /**
    * Terminate the worker. This kills the process with SIGKILL if it is still
    * running, closes the http2 connection, and deletes the socket file.
@@ -303,20 +212,13 @@ export interface DenoHTTPWorker {
   shutdown(): void;
 
   /**
-   * The underlying http2 connection to the unix socket that we use to
-   * communicate with Deno. This is for advanced use, you should use `client` or
-   * `request` to communicate with Deno.
-   */
-  get session(): http2.ClientHttp2Session;
-
-  /**
-   * request calls http2-wrapper.request but patches the options to work with
-   * our connection and safely handle rewriting various headers.
+   * request calls http.request but patches the options to work with our
+   * connection pool and safely handle rewriting various headers.
    */
   request(
     url: string | URL,
-    options: http2.RequestOptions,
-    callback?: (response: http.IncomingMessage) => void
+    options: http.RequestOptions,
+    callback: (response: http.IncomingMessage) => void
   ): http.ClientRequest;
 
   get stdout(): Readable;
@@ -330,34 +232,26 @@ export interface DenoHTTPWorker {
 }
 
 class denoHTTPWorker {
-  #got: Got;
-  #httpSession: http2.ClientHttp2Session;
   #onexitListeners: OnExitListener[];
   #process: ChildProcess;
   #socketFile: string;
   #stderr: Readable;
   #stdout: Readable;
   #terminated: Boolean = false;
+  #agent: http.Agent;
 
   constructor(
-    httpSession: http2.ClientHttp2Session,
     socketFile: string,
-    got: Got,
     process: ChildProcess,
     stdout: Readable,
     stderr: Readable
   ) {
-    this.#got = got;
-    this.#httpSession = httpSession;
     this.#onexitListeners = [];
     this.#process = process;
     this.#socketFile = socketFile;
     this.#stderr = stderr;
     this.#stdout = stdout;
-  }
-
-  get client(): Got {
-    return this.#got;
+    this.#agent = new http.Agent({ keepAlive: true });
   }
 
   _terminate(code?: number, signal?: string) {
@@ -368,7 +262,7 @@ class denoHTTPWorker {
     if (this.#process && this.#process.exitCode === null) {
       forceKill(this.#process.pid!);
     }
-    this.#httpSession.close();
+    this.#agent.destroy();
     fs.rm(this.#socketFile);
     for (let onexit of this.#onexitListeners) {
       onexit(code ?? 1, signal ?? "");
@@ -383,20 +277,55 @@ class denoHTTPWorker {
     this.#process.kill("SIGINT");
   }
 
-  get session() {
-    return this.#httpSession;
-  }
-
   request(
     url: string | URL,
-    options: http2.RequestOptions,
-    callback?: (response: http.IncomingMessage) => void
-  ) {
-    options.h2session = this.#httpSession;
-    let patched = patchRequestURL(url);
-    url = patched.url;
-    options.headers = { ...options.headers, ...patched.headers };
-    return http2.request(url, options, callback);
+    options: http.RequestOptions,
+    callback: (response: http.IncomingMessage) => void
+  ): http.ClientRequest {
+    options.headers = options.headers || {};
+
+    // TODO: ensure these are handled with the correct casing?
+    delete options.headers["x-deno-worker-host"];
+    delete options.headers["x-deno-worker-connection"];
+
+    // NodeJS will send both the host and the connection headers
+    // (https://nodejs.org/api/http.html#new-agentoptions). We don't want these
+    // to make it to Deno unless they are explicitly set by the user. So store
+    // them to reconstruct on the other size.
+    if (options.headers.host)
+      options.headers["X-Deno-Worker-Host"] = options.headers.host;
+    if (options.headers.connection)
+      options.headers["X-Deno-Worker-Connection"] = options.headers.connection;
+
+    options.headers = {
+      ...options.headers,
+      "X-Deno-Worker-URL": typeof url === "string" ? url : url.toString(),
+    };
+    url = "http://deno";
+    options.agent = this.#agent;
+    options.socketPath = this.#socketFile;
+    return http.request(url, options, callback);
+  }
+
+  // We send this request to Deno so that we get a live connection in the
+  // http.Agent and subsequent requests are do not have to wait for a new
+  // connection.
+  async warmRequest() {
+    return new Promise<void>((resolve, reject) => {
+      let req = http.request(
+        "http://deno",
+        { agent: this.#agent, socketPath: this.#socketFile },
+        (resp) => {
+          resp.on("error", reject);
+          resp.on("data", () => {});
+          resp.on("close", () => {
+            resolve();
+          });
+        }
+      );
+      req.on("error", reject);
+      req.end();
+    });
   }
 
   get stdout() {

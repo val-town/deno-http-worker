@@ -1,6 +1,6 @@
 {
   "name": "deno-http-worker",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "",
   "main": "dist/index.js",
   "types": "./dist/index.d.ts",
@@ -31,8 +31,5 @@
     "@types/node": "^20.12.7",
     "typescript": "^5.4.5",
     "vitest": "^1.5.0"
-  },
-  "dependencies": {
-    "got": "^14.2.1"
   }
 }

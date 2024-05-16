@@ -16,10 +16,10 @@ export default async function (req: Request): Promise<Response> {
   if (!initialized) {
     initializing = true;
     try {
-      const importValue = await req.text();
+      const importValue = req.headers.get("X-VT-Import");
       if (!importValue) {
         // This request will error and future requests will hang.
-        return new Response("No source or import value found", { status: 400 });
+        return new Response(`No source or import value found`, { status: 400 });
       }
       handler = (await import(importValue)).default;
       initialized = true;
@@ -27,10 +27,10 @@ export default async function (req: Request): Promise<Response> {
       for (const { req, resolve } of pendingRequests) {
         resolve(handler(req));
       }
+      return handler(req);
     } catch (e) {
       return new Response(e, { status: 500 });
     }
-    return new Response("vt-done");
   }
   return handler(req);
 }
