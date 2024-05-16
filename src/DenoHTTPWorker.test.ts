@@ -52,13 +52,13 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   it("json response multiple requests", async () => {
     let worker = await newDenoHTTPWorker(
       `
-        export default async function (req: Request): Promise<Response> {
+        export default { async fetch (req: Request): Promise<Response> {
           let headers = {};
           for (let [key, value] of req.headers.entries()) {
             headers[key] = value;
           }
           return Response.json({ ok: req.url, headers: headers })
-        }
+        } }
       `,
       { printOutput: true }
     );
@@ -74,13 +74,35 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.terminate();
   });
 
+  it("onError", async () => {
+    let worker = await newDenoHTTPWorker(
+      `
+        export default { async fetch (req: Request): Promise<Response> {
+          return {} // not a response
+        }, onError (error: Error): Response {
+          return Response.json({ error: error.message }, { status: 500 })
+        }}
+      `,
+      { printOutput: true }
+    );
+    let json = await jsonRequest(worker, "https://localhost/hello?isee=you", {
+      headers: { accept: "application/json" },
+    });
+    expect(json).toEqual({
+      error:
+        "Return value from serve handler must be a response or a promise resolving to a response",
+    });
+
+    worker.terminate();
+  });
+
   it("shutdown gracefully", async () => {
     let worker = await newDenoHTTPWorker(
       `
-        export default async function (req: Request): Promise<Response> {
+        export default { async fetch (req: Request): Promise<Response> {
           new Promise((resolve) => setTimeout(() => {resolve(); console.log("hi")}, 200));
           return Response.json({ ok: req.url })
-        }
+        }}
       `,
       { printOutput: true }
     );

@@ -7,17 +7,29 @@ const importURL =
     ? script
     : "data:text/tsx," + encodeURIComponent(script);
 
-const handler = await import(importURL);
-if (!handler.default) {
+const mod = await import(importURL);
+if (!mod.default) {
   throw new Error("No default export found in script.");
 }
-if (typeof handler.default !== "function") {
-  throw new Error("Default export is not a function.");
+if (typeof mod.default.fetch !== "function") {
+  throw new Error("Default export does not have a fetch function.");
 }
+
+const onError =
+  mod.default.onError ??
+  function (error) {
+    console.error(error);
+    return new Response("Internal Server Error", { status: 500 });
+  };
+const onListen = mod.default.onListen ?? function (_localAddr: Deno.NetAddr) {};
 
 // Use an empty onListen callback to prevent Deno from logging
 const server = Deno.serve(
-  { path: socketFile, onListen: () => {} },
+  {
+    path: socketFile,
+    onListen: onListen,
+    onError: onError,
+  },
   (req: Request) => {
     const headerUrl = req.headers.get("X-Deno-Worker-URL");
     if (!headerUrl) {
@@ -41,7 +53,7 @@ const server = Deno.serve(
       );
 
     req.headers.delete("X-Deno-Worker-URL");
-    return handler.default(req);
+    return mod.default.fetch(req);
   }
 );
 

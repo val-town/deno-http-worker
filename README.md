@@ -10,22 +10,35 @@ Similarly to [deno-vm](https://github.com/casual-simulation/node-deno-vm), deno-
 import { newDenoHTTPWorker } from 'deno-http-worker';
 
 let worker = await newDenoHTTPWorker(
-    `export default async function (req: Request): Promise<Response> {
-        return Response.json({ ok: req.url })
+    `export default {
+        async fetch(req: Request): Promise<Response> {
+            return Response.json({ ok: req.url });
+        },
     }`,
     { printOutput: true, runFlags: ["--alow-net"] }
 );
 
-let json = await worker.client
-    .get("https://hello/world?query=param")
-    .json();
-console.log(json) // => { ok: 'https://hello/world?query=param' }
+const body = await new Primise((resolve, reject) => {
+    const req = worker.request("https://hello/world?query=param", {}, (resp) => {
+        const body: any[] = [];
+        resp.on("error", reject);
+        resp.on("data", (chunk) => {
+            body.push(chunk);
+        });
+        resp.on("end", () => {
+            resolve(Buffer.concat(body).toString());
+        });
+        console.log(resp)
+    }
+    req.end();
+})
+console.log(body) // => {"ok":"https://hello/world?query=param"}
 
 worker.terminate();
 ```
 
 ## Internals
 
-Deno-http-worker connects to the Deno process over a single Unix socket http2 connection to make requests. This is for performance and efficiency. As a result, the worker does not provide an address or url, but instead returns an instance of a [got](https://www.npmjs.com/package/got) client that you can make requests with. This ensures that only the underlying `http2.ClientHttp2Session` is used to make requests.
+Deno-http-worker connects to the Deno process over a Unix socket to make requests.  As a result, the worker does not provide an address or url, but instead returns `request` function that calls `http.request` under the hood, but modifies the request attributes to work over the socket.
 
-If you need more advanced usage that cannot be covered by `got`, please open a ticket.
+If you need more advanced usage here, or run into bugs, please open an issue.
