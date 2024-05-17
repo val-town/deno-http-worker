@@ -155,7 +155,7 @@ export const newDenoHTTPWorker = async (
             signal,
           })
         );
-        fs.rm(socketFile);
+        fs.rm(socketFile).catch(() => {});
       } else {
         (worker as denoHTTPWorker)._terminate(code, signal);
       }
