@@ -17,7 +17,7 @@ if (typeof mod.default.fetch !== "function") {
 
 const onError =
   mod.default.onError ??
-  function (error) {
+  function (error: unknown) {
     console.error(error);
     return new Response("Internal Server Error", { status: 500 });
   };
@@ -56,6 +56,11 @@ const server = Deno.serve(
     return mod.default.fetch(req);
   }
 );
+
+globalThis.onerror = (e) => {
+  console.error(e.error);
+  e.preventDefault();
+};
 
 Deno.addSignalListener("SIGINT", async () => {
   // On interrupt we only shut down the server. Deno will wait for all

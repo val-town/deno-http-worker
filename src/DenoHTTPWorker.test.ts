@@ -97,7 +97,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   });
   it("onError not handled", async () => {
     // onError is not called in all cases, for example, here I can pass a
-    // readable stream and the error kills the process instead :(
+    // readable stream and the error is only caught by the global onerror handler.
     let worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
@@ -114,21 +114,21 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
           return Response.json({ error: error.message }, { status: 500 })
         }}
       `,
-      { printOutput: true }
+      { printOutput: false }
     );
-    let exit = new Promise((resolves) => {
-      worker.addEventListener("exit", (code, signal) => {
-        resolves({ code, signal });
-      });
-    });
-    expect(
-      jsonRequest(worker, "https://localhost/hello?isee=you", {
-        headers: { accept: "application/json" },
-      })
-    ).rejects.toThrow();
-    // This error seems to be "socket hang up" or "aborted", depending on timing, so we just check for the exception.
+    jsonRequest(worker, "https://localhost/hello?isee=you", {
+      headers: { accept: "application/json" },
+    }).catch(() => {});
 
-    expect(await exit).toEqual({ code: 1, signal: "" });
+    while (true) {
+      let stderr = worker.stderr.read();
+      if (stderr) {
+        console.log(stderr.toString());
+        expect(stderr.toString()).toContain("expected typed ArrayBufferView");
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     worker.terminate();
   });
 
