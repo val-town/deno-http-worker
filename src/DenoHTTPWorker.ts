@@ -27,7 +27,7 @@ export interface DenoWorkerOptions {
    * The path to the executable that should be use when spawning the subprocess.
    * Defaults to "deno".
    */
-  denoExecutable: string;
+  denoExecutable: string | string[];
 
   /**
    * The path to the script that should be used to bootstrap the worker
@@ -125,11 +125,22 @@ export const newDenoHTTPWorker = async (
   } else {
     scriptArgs = [socketFile, "import", script.href];
   }
-
-  const command = _options.denoExecutable;
+  if (
+    Array.isArray(_options.denoExecutable) &&
+    _options.denoExecutable.length === 0
+  ) {
+    throw new Error("denoExecutable must not be an empty array");
+  }
+  const command =
+    typeof _options.denoExecutable === "string"
+      ? _options.denoExecutable
+      : (_options.denoExecutable[0] as string);
 
   return new Promise(async (resolve, reject) => {
     const args = [
+      ...(typeof _options.denoExecutable === "string"
+        ? []
+        : _options.denoExecutable.slice(1)),
       "run",
       ..._options.runFlags,
       _options.denoBootstrapScriptPath,
@@ -138,6 +149,7 @@ export const newDenoHTTPWorker = async (
     if (_options.printCommandAndArguments) {
       console.log("Spawning deno process:", [command, ...args]);
     }
+
     const process = spawn(command, args, _options.spawnOptions);
     let running = false;
     let exited = false;
