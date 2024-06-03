@@ -64,6 +64,11 @@ export interface DenoWorkerOptions {
    * Options used to spawn the Deno child process
    */
   spawnOptions: SpawnOptions;
+
+  /**
+   * Callback that is called when the process is spawned.
+   */
+  onSpawn?: (process: ChildProcess) => void;
 }
 
 /**
@@ -172,7 +177,7 @@ export const newDenoHTTPWorker = async (
         (worker as denoHTTPWorker)._terminate(code, signal);
       }
     });
-
+    options.onSpawn && options.onSpawn(process);
     const stdout = <Readable>process.stdout;
     const stderr = <Readable>process.stderr;
 
