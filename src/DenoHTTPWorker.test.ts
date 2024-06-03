@@ -49,6 +49,29 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       }
     });
   });
+  it("onSpawn is called", async () => {
+    let pid: number | undefined;
+    let worker = await newDenoHTTPWorker(
+      `
+        export default { async fetch (req: Request): Promise<Response> {
+          let headers = {};
+          for (let [key, value] of req.headers.entries()) {
+            headers[key] = value;
+          }
+          return Response.json({ ok: req.url, headers: headers })
+        } }
+      `,
+      {
+        onSpawn: (process) => {
+          pid = process.pid;
+        },
+        printOutput: true,
+      }
+    );
+    expect(pid).toBeDefined();
+    worker.terminate();
+  });
+
   it("json response multiple requests", async () => {
     let worker = await newDenoHTTPWorker(
       `
