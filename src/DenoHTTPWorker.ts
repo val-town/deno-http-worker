@@ -1,9 +1,10 @@
-import path, { resolve } from "path";
-import { ChildProcess, spawn, SpawnOptions } from "child_process";
-import { Readable } from "stream";
-import readline from "readline";
-import http from "http";
-import fs from "fs/promises";
+import path, { resolve } from "node:path";
+import { ChildProcess, spawn, SpawnOptions } from "node:child_process";
+import { Readable } from "node:stream";
+import readline from "node:readline";
+import http from "node:http";
+import fs from "node:fs/promises";
+import os from "node:os";
 
 import { fileURLToPath } from "url";
 
@@ -91,7 +92,10 @@ export const newDenoHTTPWorker = async (
   let scriptArgs: string[];
 
   // Create the socket location that we'll use to communicate with Deno.
-  const socketFile = `${crypto.randomUUID()}-deno-http.sock`;
+  const socketFile = path.join(
+    os.tmpdir(),
+    `${crypto.randomUUID()}-deno-http.sock`
+  );
 
   // If we have a file import, make sure we allow read access to the file.
   const allowReadFlagValue =
