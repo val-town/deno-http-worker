@@ -15,12 +15,12 @@ let worker = await newDenoHTTPWorker(
             return Response.json({ ok: req.url });
         },
     }`,
-    { printOutput: true, runFlags: ["--alow-net"] }
+    { printOutput: true, runFlags: ["--allow-net"] }
 );
 
-const body = await new Primise((resolve, reject) => {
+const body = await new Promise((resolve, reject) => {
     const req = worker.request("https://hello/world?query=param", {}, (resp) => {
-        const body: any[] = [];
+        const body = [];
         resp.on("error", reject);
         resp.on("data", (chunk) => {
             body.push(chunk);
@@ -28,8 +28,7 @@ const body = await new Primise((resolve, reject) => {
         resp.on("end", () => {
             resolve(Buffer.concat(body).toString());
         });
-        console.log(resp)
-    }
+    })
     req.end();
 })
 console.log(body) // => {"ok":"https://hello/world?query=param"}

@@ -1,7 +1,8 @@
 import { it as _it, beforeAll, describe, expect } from "vitest";
 import { DenoHTTPWorker, newDenoHTTPWorker } from "./index.js";
 import fs from "fs";
-import path from "path";
+import path, { resolve } from "path";
+import { Worker } from "worker_threads";
 
 // Uncomment this if you want to debug serial test execution
 // const it = _it.concurrent;
@@ -391,4 +392,42 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   //   // await initReq;
   //   worker.terminate();
   // });
+
+  it("can test that snippets in readme run successfully", async () => {
+    const rm = fs.readFileSync(path.resolve(__dirname, "../README.md"), {
+      encoding: "utf-8",
+    });
+
+    const toTest = rm
+      .split("\n```")
+      .filter((line) => line.startsWith("ts\n"))
+      .map((line) => line.slice(3));
+    for (let source of toTest) {
+      source = source.replaceAll(
+        "import { newDenoHTTPWorker } from 'deno-http-worker';",
+        "const { newDenoHTTPWorker } = await import('./dist/index.js');          "
+      );
+      source = `(async () => {${source}})()`;
+
+      await new Promise<void>((resolve, reject) => {
+        const worker = new Worker(source, {
+          eval: true,
+        });
+        worker.stderr.on("data", (data) => {
+          console.error(data.toString());
+        });
+        worker.stdout.on("data", (data) => {
+          console.error(data.toString());
+        });
+        worker.on("error", (e) => {
+          console.log(e.stack);
+          reject(e);
+        });
+        worker.on("exit", (code) => {
+          console.log(code);
+          resolve();
+        });
+      });
+    }
+  });
 });
