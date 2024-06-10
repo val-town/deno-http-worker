@@ -284,7 +284,7 @@ class denoHTTPWorker {
       forceKill(this.#process.pid!);
     }
     this.#agent.destroy();
-    fs.rm(this.#socketFile);
+    fs.rm(this.#socketFile).catch(() => {});
     for (let onexit of this.#onexitListeners) {
       onexit(code ?? 1, signal ?? "");
     }

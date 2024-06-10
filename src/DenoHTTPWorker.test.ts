@@ -73,6 +73,25 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.terminate();
   });
 
+  it("dont crash on socket removal", async () => {
+    let worker = await newDenoHTTPWorker(
+      `
+        export default { async fetch (req: Request): Promise<Response> {
+          await Deno.removeSync(Deno.args[0]);
+          return Response.json({ ok: req.url })
+        } }
+      `,
+      { printOutput: true }
+    );
+    let json = await jsonRequest(worker, "https://localhost/hello?isee=you", {
+      headers: { accept: "application/json" },
+    });
+    expect(json).toEqual({
+      ok: "https://localhost/hello?isee=you",
+    });
+    worker.terminate();
+  });
+
   it("json response multiple requests", async () => {
     let worker = await newDenoHTTPWorker(
       `
