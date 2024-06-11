@@ -1,7 +1,7 @@
 import { it as _it, beforeAll, describe, expect } from "vitest";
 import { DenoHTTPWorker, newDenoHTTPWorker } from "./index.js";
 import fs from "fs";
-import path, { resolve } from "path";
+import path from "path";
 import { Worker } from "worker_threads";
 
 // Uncomment this if you want to debug serial test execution
@@ -18,7 +18,7 @@ const jsonRequest = (
   opts?: { headers?: { [key: string]: string }; body?: string }
 ): Promise<any> => {
   return new Promise((resolve, reject) => {
-    let req = worker.request(url, opts || {}, (resp) => {
+    const req = worker.request(url, opts || {}, (resp) => {
       const body: any[] = [];
       resp.on("error", reject);
       resp.on("data", (chunk) => {
@@ -38,8 +38,6 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   const echoScript = fs.readFileSync(echoFile, { encoding: "utf-8" });
   const vtFile = path.resolve(__dirname, "./test/val-town.ts");
   const vtScript = fs.readFileSync(vtFile, { encoding: "utf-8" });
-  const vtHeaderFile = path.resolve(__dirname, "./test/val-town-header.ts");
-  const vtHeaderScript = fs.readFileSync(vtHeaderFile, { encoding: "utf-8" });
 
   beforeAll(() => {
     // Clean up sockets that might have been left around during terminated test
@@ -52,7 +50,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   });
   it("onSpawn is called", async () => {
     let pid: number | undefined;
-    let worker = await newDenoHTTPWorker(
+    const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
           let headers = {};
@@ -74,7 +72,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   });
 
   it("dont crash on socket removal", async () => {
-    let worker = await newDenoHTTPWorker(
+    const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
           await Deno.removeSync(Deno.args[0]);
@@ -83,7 +81,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       `,
       { printOutput: true }
     );
-    let json = await jsonRequest(worker, "https://localhost/hello?isee=you", {
+    const json = await jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
     });
     expect(json).toEqual({
@@ -93,7 +91,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   });
 
   it("json response multiple requests", async () => {
-    let worker = await newDenoHTTPWorker(
+    const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
           let headers = {};
@@ -106,7 +104,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       { printOutput: true }
     );
     for (let i = 0; i < 10; i++) {
-      let json = await jsonRequest(worker, "https://localhost/hello?isee=you", {
+      const json = await jsonRequest(worker, "https://localhost/hello?isee=you", {
         headers: { accept: "application/json" },
       });
       expect(json).toEqual({
@@ -118,7 +116,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   });
 
   it("onError", async () => {
-    let worker = await newDenoHTTPWorker(
+    const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
           return {} // not a response
@@ -128,7 +126,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       `,
       { printOutput: true }
     );
-    let json = await jsonRequest(worker, "https://localhost/hello?isee=you", {
+    const json = await jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
     });
     expect(json).toEqual({
@@ -141,7 +139,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   it("onError not handled", async () => {
     // onError is not called in all cases, for example, here I can pass a
     // readable stream and the error is only caught by the global onerror handler.
-    let worker = await newDenoHTTPWorker(
+    const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
           const body = new ReadableStream({
@@ -163,8 +161,8 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       headers: { accept: "application/json" },
     }).catch(() => {});
 
-    while (true) {
-      let stderr = worker.stderr.read();
+    for (;;) {
+      const stderr = worker.stderr.read();
       if (stderr) {
         console.log(stderr.toString());
         expect(stderr.toString()).toContain("expected typed ArrayBufferView");
@@ -176,7 +174,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   });
 
   it("shutdown gracefully", async () => {
-    let worker = await newDenoHTTPWorker(
+    const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
           new Promise((resolve) => setTimeout(() => {resolve(); console.log("hi")}, 200));
@@ -190,18 +188,19 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.stderr.on("data", (data) => (logs += data));
     worker.stdout.on("data", (data) => (logs += data));
 
-    await new Promise<void>(async (resolve) => {
-      worker.addEventListener("exit", (code, signal) => {
+    const exitPromise = new Promise<void>((resolve) => {
+      worker.addEventListener("exit", (code) => {
         expect(code).toEqual(0);
         expect(logs).toContain("hi");
         resolve();
       });
-      let json = await jsonRequest(worker, "https://localhost/hello?isee=you");
-      expect(json).toEqual({
-        ok: "https://localhost/hello?isee=you",
-      });
-      worker.shutdown();
     });
+    const json = await jsonRequest(worker, "https://localhost/hello?isee=you");
+    expect(json).toEqual({
+      ok: "https://localhost/hello?isee=you",
+    });
+    worker.shutdown();
+    await exitPromise;
   });
 
   describe("runFlags editing", () => {
@@ -213,7 +212,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       "--allow-read=foo,/dev/null",
       "--allow-write=bar,/dev/null",
     ])("should handle %s", async (flag) => {
-      let worker = await newDenoHTTPWorker(echoScript, {
+      const worker = await newDenoHTTPWorker(echoScript, {
         printOutput: true,
         runFlags: [flag],
       });
@@ -225,7 +224,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   it("should be able to import script", async () => {
     const file = path.resolve(__dirname, "./test/echo-request.ts");
     const url = new URL(`file://${file}`);
-    let worker = await newDenoHTTPWorker(url, {
+    const worker = await newDenoHTTPWorker(url, {
       printOutput: true,
       printCommandAndArguments: true,
     });
@@ -235,10 +234,10 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   });
 
   it("host and connection is not overwritten", async () => {
-    let worker = await newDenoHTTPWorker(echoScript, {
+    const worker = await newDenoHTTPWorker(echoScript, {
       printOutput: true,
     });
-    let resp: any = await jsonRequest(worker, "https://localhost/", {
+    const resp: any = await jsonRequest(worker, "https://localhost/", {
       headers: { connection: "happy", host: "fish" },
     });
     expect(resp["headers"]["connection"]).toEqual("happy");
@@ -270,13 +269,13 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   // });
 
   it("use http directly", async () => {
-    let worker = await newDenoHTTPWorker(echoScript, { printOutput: true });
+    const worker = await newDenoHTTPWorker(echoScript, { printOutput: true });
 
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     const t0 = performance.now();
-    let json = await new Promise((resolve) => {
-      let req = worker.request("http://localhost/hi", {}, (resp) => {
+    const json = await new Promise((resolve) => {
+      const req = worker.request("http://localhost/hi", {}, (resp) => {
         const body: any[] = [];
         resp.on("data", (chunk) => {
           body.push(chunk);
@@ -332,7 +331,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   // });
 
   it("can implement val town with http.request", async () => {
-    let worker = await newDenoHTTPWorker(vtScript, { printOutput: true });
+    const worker = await newDenoHTTPWorker(vtScript, { printOutput: true });
 
     const t0 = performance.now();
     await new Promise((resolve, reject) => {
@@ -359,8 +358,8 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       req.end();
     });
 
-    let text = await new Promise((resolve) => {
-      let req = worker.request(
+    const text = await new Promise((resolve) => {
+      const req = worker.request(
         "https://localhost:1234",
         { headers: {} },
         (resp) => {

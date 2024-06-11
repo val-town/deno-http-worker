@@ -11,9 +11,6 @@ import { fileURLToPath } from "url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DENO_PORT_LOG_PREFIX = "deno-listening-port";
-const LISTENING_HOSTPORT = "0.0.0.0:0";
-
 const DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH = resolve(
   __dirname,
   "../deno-bootstrap/index.ts"
@@ -145,77 +142,77 @@ export const newDenoHTTPWorker = async (
       ? _options.denoExecutable
       : (_options.denoExecutable[0] as string);
 
-  return new Promise(async (resolve, reject) => {
-    const args = [
-      ...(typeof _options.denoExecutable === "string"
-        ? []
-        : _options.denoExecutable.slice(1)),
-      "run",
-      ..._options.runFlags,
-      _options.denoBootstrapScriptPath,
-      ...scriptArgs,
-    ];
-    if (_options.printCommandAndArguments) {
-      console.log("Spawning deno process:", [command, ...args]);
-    }
-
-    const process = spawn(command, args, _options.spawnOptions);
-    let running = false;
-    let exited = false;
-    let worker: DenoHTTPWorker;
-    process.on("exit", (code: number, signal: string) => {
-      exited = true;
-      if (!running) {
-        let stderr = process.stderr?.read()?.toString();
-        let stdout = process.stdout?.read()?.toString();
-        reject(
-          Object.assign(new Error("Deno exited before being ready"), {
-            stderr,
-            stdout,
-            code,
-            signal,
-          })
-        );
-        fs.rm(socketFile).catch(() => {});
-      } else {
-        (worker as denoHTTPWorker)._terminate(code, signal);
+  return new Promise((resolve, reject) => {
+    (async (): Promise<DenoHTTPWorker> => {
+      const args = [
+        ...(typeof _options.denoExecutable === "string"
+          ? []
+          : _options.denoExecutable.slice(1)),
+        "run",
+        ..._options.runFlags,
+        _options.denoBootstrapScriptPath,
+        ...scriptArgs,
+      ];
+      if (_options.printCommandAndArguments) {
+        console.log("Spawning deno process:", [command, ...args]);
       }
-    });
-    options.onSpawn && options.onSpawn(process);
-    const stdout = <Readable>process.stdout;
-    const stderr = <Readable>process.stderr;
 
-    if (_options.printOutput) {
-      readline.createInterface({ input: stdout }).on("line", (line) => {
-        console.log("[deno]", line);
+      const process = spawn(command, args, _options.spawnOptions);
+      let running = false;
+      let exited = false;
+      let worker: DenoHTTPWorker | undefined = undefined;
+      process.on("exit", (code: number, signal: string) => {
+        exited = true;
+        if (!running) {
+          const stderr = process.stderr?.read()?.toString();
+          const stdout = process.stdout?.read()?.toString();
+          reject(
+            Object.assign(new Error("Deno exited before being ready"), {
+              stderr,
+              stdout,
+              code,
+              signal,
+            })
+          );
+          fs.rm(socketFile).catch(() => {});
+        } else {
+          (worker as denoHTTPWorker)._terminate(code, signal);
+        }
       });
-      readline.createInterface({ input: stderr }).on("line", (line) => {
-        console.error("[deno]", line);
-      });
-    }
+      options.onSpawn && options.onSpawn(process);
+      const stdout = <Readable>process.stdout;
+      const stderr = <Readable>process.stderr;
 
-    // Wait for the socket file to be created by the Deno process.
-    while (true) {
-      if (exited) {
-        break;
+      if (_options.printOutput) {
+        readline.createInterface({ input: stdout }).on("line", (line) => {
+          console.log("[deno]", line);
+        });
+        readline.createInterface({ input: stderr }).on("line", (line) => {
+          console.error("[deno]", line);
+        });
       }
-      try {
-        await fs.stat(socketFile);
-        // File exists
-        break;
-      } catch (err) {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+
+      // Wait for the socket file to be created by the Deno process.
+      for (;;) {
+        if (exited) {
+          break;
+        }
+        try {
+          await fs.stat(socketFile);
+          // File exists
+          break;
+        } catch (err) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
       }
-    }
-    try {
       worker = new denoHTTPWorker(socketFile, process, stdout, stderr);
       running = true;
       await (worker as denoHTTPWorker).warmRequest();
 
-      resolve(worker);
-    } catch (e) {
-      reject(e);
-    }
+      return worker;
+    })()
+      .then(resolve)
+      .catch(reject);
   });
 };
 
@@ -285,7 +282,7 @@ class denoHTTPWorker {
     }
     this.#agent.destroy();
     fs.rm(this.#socketFile).catch(() => {});
-    for (let onexit of this.#onexitListeners) {
+    for (const onexit of this.#onexitListeners) {
       onexit(code ?? 1, signal ?? "");
     }
   }
@@ -333,7 +330,7 @@ class denoHTTPWorker {
   // connection.
   async warmRequest() {
     return new Promise<void>((resolve, reject) => {
-      let req = http.request(
+      const req = http.request(
         "http://deno",
         { agent: this.#agent, socketPath: this.#socketFile },
         (resp) => {
