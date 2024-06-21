@@ -34,7 +34,7 @@ const server = Deno.serve(
     const headerUrl = req.headers.get("X-Deno-Worker-URL");
     if (!headerUrl) {
       // This is just for the warming request, shouldn't be seen by clients.
-      return Response.json({}, { status: 401 });
+      return Response.json({}, { status: 200 });
     }
     const url = new URL(headerUrl);
     // Deno Request headers are immutable so we must make a new Request in order
@@ -53,6 +53,8 @@ const server = Deno.serve(
       );
 
     req.headers.delete("X-Deno-Worker-URL");
+    req.headers.delete("X-Deno-Worker-Host");
+    req.headers.delete("X-Deno-Worker-Connection");
     return mod.default.fetch(req);
   }
 );
