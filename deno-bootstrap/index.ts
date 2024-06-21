@@ -34,7 +34,7 @@ const server = Deno.serve(
     const headerUrl = req.headers.get("X-Deno-Worker-URL");
     if (!headerUrl) {
       // This is just for the warming request, shouldn't be seen by clients.
-      return Response.json({}, { status: 200 });
+      return Response.json({ warming: true }, { status: 200 });
     }
     const url = new URL(headerUrl);
     // Deno Request headers are immutable so we must make a new Request in order
