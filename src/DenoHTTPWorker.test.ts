@@ -3,6 +3,8 @@ import { DenoHTTPWorker, newDenoHTTPWorker } from "./index.js";
 import fs from "fs";
 import path from "path";
 import { Worker } from "worker_threads";
+import { SpawnOptions, spawn } from "child_process";
+import { aC } from "vitest/dist/reporters-LqC_WI4d.js";
 
 // Uncomment this if you want to debug serial test execution
 // const it = _it.concurrent;
@@ -71,6 +73,29 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.terminate();
   });
 
+  it("alternate spawnFunc can be provided", async () => {
+    let firstArg: string = "";
+    const worker = await newDenoHTTPWorker(
+      `
+        export default { async fetch (req: Request): Promise<Response> {
+          let headers = {};
+          for (let [key, value] of req.headers.entries()) {
+            headers[key] = value;
+          }
+          return Response.json({ ok: req.url, headers: headers })
+        } }
+      `,
+      {
+        spawnFunc: (command: string, args: string[], options: SpawnOptions) => {
+          firstArg = args[0] as string;
+          return spawn(command, args, options);
+        },
+      }
+    );
+    expect(firstArg).toEqual("run");
+    worker.terminate();
+  });
+
   it("dont crash on socket removal", async () => {
     const worker = await newDenoHTTPWorker(
       `
@@ -104,9 +129,13 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       { printOutput: true }
     );
     for (let i = 0; i < 10; i++) {
-      const json = await jsonRequest(worker, "https://localhost/hello?isee=you", {
-        headers: { accept: "application/json" },
-      });
+      const json = await jsonRequest(
+        worker,
+        "https://localhost/hello?isee=you",
+        {
+          headers: { accept: "application/json" },
+        }
+      );
       expect(json).toEqual({
         ok: "https://localhost/hello?isee=you",
         headers: { accept: "application/json" },
