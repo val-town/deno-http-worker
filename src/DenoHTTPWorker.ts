@@ -20,6 +20,26 @@ interface OnExitListener {
   (exitCode: number, signal: string): void;
 }
 
+interface MinimalChildProcess {
+  stdout: Readable | null;
+  stderr: Readable | null;
+  readonly pid?: number | undefined;
+  readonly exitCode: number | null;
+  kill(signal?: NodeJS.Signals | number): boolean;
+  on(event: string, listener: (...args: any[]) => void): this;
+  on(
+    event: "close",
+    listener: (code: number | null, signal: NodeJS.Signals | null) => void
+  ): this;
+  on(event: "disconnect", listener: () => void): this;
+  on(event: "error", listener: (err: Error) => void): this;
+  on(
+    event: "exit",
+    listener: (code: number | null, signal: NodeJS.Signals | null) => void
+  ): this;
+  on(event: "spawn", listener: () => void): this;
+}
+
 export interface DenoWorkerOptions {
   /**
    * The path to the executable that should be use when spawning the subprocess.
@@ -66,7 +86,16 @@ export interface DenoWorkerOptions {
   /**
    * Callback that is called when the process is spawned.
    */
-  onSpawn?: (process: ChildProcess) => void;
+  onSpawn?: (process: MinimalChildProcess) => void;
+
+  /**
+   * Provide an alternative spawn functions. Defaults to child_process.spawn.
+   */
+  spawnFunc: (
+    command: string,
+    args: string[],
+    options: SpawnOptions
+  ) => MinimalChildProcess;
 }
 
 /**
@@ -83,6 +112,7 @@ export const newDenoHTTPWorker = async (
     printCommandAndArguments: false,
     spawnOptions: {},
     printOutput: false,
+    spawnFunc: spawn,
     ...options,
   };
 
@@ -157,7 +187,7 @@ export const newDenoHTTPWorker = async (
         console.log("Spawning deno process:", [command, ...args]);
       }
 
-      const process = spawn(command, args, _options.spawnOptions);
+      const process = _options.spawnFunc(command, args, _options.spawnOptions);
       let running = false;
       let exited = false;
       let worker: DenoHTTPWorker | undefined = undefined;
@@ -251,7 +281,7 @@ export interface DenoHTTPWorker {
 
 class denoHTTPWorker {
   #onexitListeners: OnExitListener[];
-  #process: ChildProcess;
+  #process: MinimalChildProcess;
   #socketFile: string;
   #stderr: Readable;
   #stdout: Readable;
@@ -260,7 +290,7 @@ class denoHTTPWorker {
 
   constructor(
     socketFile: string,
-    process: ChildProcess,
+    process: MinimalChildProcess,
     stdout: Readable,
     stderr: Readable
   ) {
