@@ -24,7 +24,9 @@ export default {
             status: 400,
           });
         }
+        console.log("start import");
         handler = (await import(importValue)).default;
+        console.log("end import");
         initialized = true;
         initializing = false;
         for (const { req, resolve } of pendingRequests) {

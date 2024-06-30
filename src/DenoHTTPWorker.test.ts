@@ -356,10 +356,49 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   //   worker.terminate();
   // });
 
+  it("can replicate awaited promise bug", async () => {
+    let worker = await newDenoHTTPWorker(vtScript, { printOutput: true });
+
+    const t0 = performance.now();
+
+    console.log("begin request");
+    await new Promise((resolve, reject) => {
+      const req = worker.request(
+        "http://vt",
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+          method: "POST",
+        },
+        (resp) => {
+          const body: any[] = [];
+          resp.on("data", (chunk) => {
+            body.push(chunk);
+          });
+          resp.on("end", () => {
+            resolve(Buffer.concat(body).toString());
+          });
+        }
+      );
+      req.on("error", reject);
+      req.write(
+        `data:text/tsx,${encodeURIComponent(
+          `export const foo = await new Promise(resolve => setTimeout(() => resolve(42), 0));`
+        )}`
+      );
+      req.end();
+    });
+    console.log("end request");
+    worker.terminate();
+  });
+
   it("can implement val town with http.request", async () => {
     const worker = await newDenoHTTPWorker(vtScript, { printOutput: true });
 
     const t0 = performance.now();
+
+    console.log("hi");
     await new Promise((resolve, reject) => {
       const req = worker.request(
         "http://vt",
@@ -383,6 +422,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       req.write(`data:text/tsx,${encodeURIComponent(DEFAULT_HTTP_VAL)}`);
       req.end();
     });
+    console.log("hi2");
 
     const text = await new Promise((resolve) => {
       const req = worker.request(
