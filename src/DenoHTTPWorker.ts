@@ -1,5 +1,5 @@
 import path, { resolve } from "node:path";
-import { ChildProcess, spawn, SpawnOptions } from "node:child_process";
+import { spawn, SpawnOptions } from "node:child_process";
 import { Readable } from "node:stream";
 import readline from "node:readline";
 import http from "node:http";

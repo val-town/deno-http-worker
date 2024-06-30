@@ -4,7 +4,6 @@ import fs from "fs";
 import path from "path";
 import { Worker } from "worker_threads";
 import { SpawnOptions, spawn } from "child_process";
-import { aC } from "vitest/dist/reporters-LqC_WI4d.js";
 
 // Uncomment this if you want to debug serial test execution
 // const it = _it.concurrent;
