@@ -131,9 +131,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       const json = await jsonRequest(
         worker,
         "https://localhost/hello?isee=you",
-        {
-          headers: { accept: "application/json" },
-        }
+        { headers: { accept: "application/json" } }
       );
       expect(json).toEqual({
         ok: "https://localhost/hello?isee=you",
