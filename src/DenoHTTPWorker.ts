@@ -17,7 +17,7 @@ const DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH = resolve(
 );
 
 interface OnExitListener {
-  (exitCode: number, signal: string): void;
+  (exitCode: number | null, signal: string | null): void;
 }
 
 interface MinimalChildProcess {
@@ -208,6 +208,12 @@ export const newDenoHTTPWorker = async (
         } else {
           (worker as denoHTTPWorker)._terminate(code, signal);
         }
+      });
+      process.on("error", (err) => {
+        exited = true;
+        // We only want to handle error events if we get an error on spawn.
+        // https://nodejs.org/api/child_process.html#event-error
+        if (!running) reject(err);
       });
       options.onSpawn && options.onSpawn(process);
       const stdout = <Readable>process.stdout;

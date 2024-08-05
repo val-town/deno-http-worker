@@ -72,6 +72,15 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.terminate();
   });
 
+  it("errors on error", async () => {
+    await expect(
+      newDenoHTTPWorker(``, {
+        denoExecutable: "noexist",
+        printOutput: true,
+      })
+    ).rejects.toThrow();
+  });
+
   it("alternate spawnFunc can be provided", async () => {
     let firstArg: string = "";
     const worker = await newDenoHTTPWorker(
