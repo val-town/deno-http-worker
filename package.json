@@ -25,7 +25,7 @@
   "engines": {
     "node": "20 || 22"
   },
-  "author": "",
+  "author": "Val Town",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/val-town/deno-http-worker/issues"
