@@ -20,7 +20,7 @@ interface OnExitListener {
   (exitCode: number, signal: string): void;
 }
 
-interface MinimalChildProcess {
+export interface MinimalChildProcess {
   stdout: Readable | null;
   stderr: Readable | null;
   readonly pid?: number | undefined;
@@ -204,7 +204,7 @@ export const newDenoHTTPWorker = async (
               signal,
             })
           );
-          fs.rm(socketFile).catch(() => {});
+          fs.rm(socketFile).catch(() => { });
         } else {
           (worker as denoHTTPWorker)._terminate(code, signal);
         }
@@ -223,7 +223,7 @@ export const newDenoHTTPWorker = async (
       }
 
       // Wait for the socket file to be created by the Deno process.
-      for (;;) {
+      for (; ;) {
         if (exited) {
           break;
         }
@@ -311,7 +311,7 @@ class denoHTTPWorker {
       forceKill(this.#process.pid!);
     }
     this.#agent.destroy();
-    fs.rm(this.#socketFile).catch(() => {});
+    fs.rm(this.#socketFile).catch(() => { });
     for (const onexit of this.#onexitListeners) {
       onexit(code ?? 1, signal ?? "");
     }
@@ -365,7 +365,7 @@ class denoHTTPWorker {
         { agent: this.#agent, socketPath: this.#socketFile },
         (resp) => {
           resp.on("error", reject);
-          resp.on("data", () => {});
+          resp.on("data", () => { });
           resp.on("close", () => {
             resolve();
           });
