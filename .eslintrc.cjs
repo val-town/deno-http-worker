@@ -1,9 +1,4 @@
 module.exports = {
-  settings: {
-    jest: {
-      version: 28,
-    },
-  },
   env: {
     es2022: true,
     node: true,

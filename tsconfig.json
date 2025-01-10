@@ -1,21 +1,21 @@
 {
-    "compilerOptions": {
-      "declaration": true,
-      "declarationMap": true,
-      "esModuleInterop": true,
-      "forceConsistentCasingInFileNames": true,
-      "inlineSources": true,
-      "jsx": "react",
-      "module": "nodenext",
-      "moduleResolution": "nodenext",
-      "noUncheckedIndexedAccess": true,
-      "resolveJsonModule": true,
-      "skipLibCheck": true,
-      "sourceMap": true,
-      "strict": true,
-      "target": "es2022",
-      "rootDir": "./src",
-      "outDir": "./dist"
-    },
-    "exclude": ["dist", "deno-bootstrap", "src/test"]
-  }
+  "compilerOptions": {
+    "declaration": true,
+    "declarationMap": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "inlineSources": true,
+    "jsx": "react",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "noUncheckedIndexedAccess": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "sourceMap": true,
+    "strict": true,
+    "target": "es2022",
+    "rootDir": "./src",
+    "outDir": "./dist"
+  },
+  "exclude": ["dist", "deno-bootstrap", "src/test"]
+}
