@@ -1,12 +1,12 @@
 import path, { resolve } from "node:path";
-import { spawn, SpawnOptions } from "node:child_process";
-import { Readable } from "node:stream";
+import { spawn, type SpawnOptions } from "node:child_process";
+import type { Readable } from "node:stream";
 import readline from "node:readline";
 import http from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
 
-import { fileURLToPath } from "url";
+import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,8 +16,18 @@ const DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH = resolve(
   "../deno-bootstrap/index.ts"
 );
 
-interface OnExitListener {
-  (exitCode: number, signal: string): void;
+type OnExitListener = (exitCode: number, signal: string) => void;
+
+export class EarlyExitDenoHTTPWorkerError extends Error {
+  constructor(
+    public message: string,
+    public stderr: string,
+    public stdout: string,
+    public code: number,
+    public signal: string
+  ) {
+    super(message);
+  }
 }
 
 export interface MinimalChildProcess {
@@ -141,19 +151,19 @@ export const newDenoHTTPWorker = async (
     }
     if (flag.startsWith("--allow-read=")) {
       allowReadFound = true;
-      return (flag += "," + allowReadFlagValue);
+      return (flag += `,${allowReadFlagValue}`);
     }
     if (flag.startsWith("--allow-write=")) {
       allowWriteFound = true;
-      return (flag += "," + socketFile);
+      return (flag += `,${socketFile}`);
     }
     return flag;
   });
   if (!allowReadFound) {
-    _options.runFlags.push("--allow-read=" + allowReadFlagValue);
+    _options.runFlags.push(`--allow-read=${allowReadFlagValue}`);
   }
   if (!allowWriteFound) {
-    _options.runFlags.push("--allow-write=" + socketFile);
+    _options.runFlags.push(`--allow-write=${socketFile}`);
   }
 
   if (typeof script === "string") {
@@ -197,14 +207,15 @@ export const newDenoHTTPWorker = async (
           const stderr = process.stderr?.read()?.toString();
           const stdout = process.stdout?.read()?.toString();
           reject(
-            Object.assign(new Error("Deno exited before being ready"), {
+            new EarlyExitDenoHTTPWorkerError(
+              "Deno exited before being ready",
               stderr,
               stdout,
               code,
-              signal,
-            })
+              signal
+            )
           );
-          fs.rm(socketFile).catch(() => { });
+          fs.rm(socketFile).catch(() => {});
         } else {
           (worker as denoHTTPWorker)._terminate(code, signal);
         }
@@ -223,7 +234,7 @@ export const newDenoHTTPWorker = async (
       }
 
       // Wait for the socket file to be created by the Deno process.
-      for (; ;) {
+      for (;;) {
         if (exited) {
           break;
         }
@@ -285,7 +296,7 @@ class denoHTTPWorker {
   #socketFile: string;
   #stderr: Readable;
   #stdout: Readable;
-  #terminated: Boolean = false;
+  #terminated = false;
   #agent: http.Agent;
 
   constructor(
@@ -311,7 +322,7 @@ class denoHTTPWorker {
       forceKill(this.#process.pid!);
     }
     this.#agent.destroy();
-    fs.rm(this.#socketFile).catch(() => { });
+    fs.rm(this.#socketFile).catch(() => {});
     for (const onexit of this.#onexitListeners) {
       onexit(code ?? 1, signal ?? "");
     }
@@ -365,7 +376,7 @@ class denoHTTPWorker {
         { agent: this.#agent, socketPath: this.#socketFile },
         (resp) => {
           resp.on("error", reject);
-          resp.on("data", () => { });
+          resp.on("data", () => {});
           resp.on("close", () => {
             resolve();
           });

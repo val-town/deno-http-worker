@@ -1,9 +1,10 @@
-import { it as _it, beforeAll, describe, expect } from "vitest";
-import { DenoHTTPWorker, newDenoHTTPWorker } from "./index.js";
-import fs from "fs";
-import path from "path";
-import { Worker } from "worker_threads";
-import { SpawnOptions, spawn } from "child_process";
+import { it as _it, beforeAll, describe, expect, test } from "vitest";
+import { type DenoHTTPWorker, newDenoHTTPWorker } from "./index.js";
+import fs from "node:fs";
+import path from "node:path";
+import { Worker } from "node:worker_threads";
+import { type SpawnOptions, spawn } from "node:child_process";
+import { EarlyExitDenoHTTPWorkerError } from "./DenoHTTPWorker.js";
 
 // Uncomment this if you want to debug serial test execution
 // const it = _it.concurrent;
@@ -34,6 +35,12 @@ const jsonRequest = (
   });
 };
 
+test("EarlyExitDenoHTTPWorkerError", () => {
+  expect(
+    new EarlyExitDenoHTTPWorkerError("Test", "", "hi", 10, "SIGKILL")
+  ).toHaveProperty("signal", "SIGKILL");
+});
+
 describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   const echoFile = path.resolve(__dirname, "./test/echo-request.ts");
   const echoScript = fs.readFileSync(echoFile, { encoding: "utf-8" });
@@ -43,6 +50,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   beforeAll(() => {
     // Clean up sockets that might have been left around during terminated test
     // runs.
+    // biome-ignore lint/complexity/noForEach: this is a test file
     fs.readdirSync(".").forEach((file) => {
       if (path.basename(file).endsWith("-deno-http.sock")) {
         fs.rmSync(file);
@@ -73,7 +81,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   });
 
   it("alternate spawnFunc can be provided", async () => {
-    let firstArg: string = "";
+    let firstArg = "";
     const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
@@ -256,7 +264,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     });
 
     await jsonRequest(worker, "http://localhost");
-    await worker.terminate();
+    worker.terminate();
   });
 
   it("host and connection is not overwritten", async () => {
@@ -266,9 +274,9 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     const resp: any = await jsonRequest(worker, "https://localhost/", {
       headers: { connection: "happy", host: "fish" },
     });
-    expect(resp["headers"]["connection"]).toEqual("happy");
-    expect(resp["headers"]["host"]).toEqual("fish");
-    await worker.terminate();
+    expect(resp.headers.connection).toEqual("happy");
+    expect(resp.headers.host).toEqual("fish");
+    worker.terminate();
   });
 
   // it("json response", async () => {

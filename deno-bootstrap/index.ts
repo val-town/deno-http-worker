@@ -3,9 +3,9 @@ const scriptType = Deno.args[1];
 const script = Deno.args[2];
 
 const importURL =
-  scriptType == "import"
+  scriptType === "import"
     ? script
-    : "data:text/tsx," + encodeURIComponent(script);
+    : `data:text/tsx,${encodeURIComponent(script)}`;
 
 const mod = await import(importURL);
 if (!mod.default) {
@@ -17,11 +17,11 @@ if (typeof mod.default.fetch !== "function") {
 
 const onError =
   mod.default.onError ??
-  function (error: unknown) {
+  ((error: unknown) => {
     console.error(error);
     return new Response("Internal Server Error", { status: 500 });
-  };
-const onListen = mod.default.onListen ?? function (_localAddr: Deno.NetAddr) {};
+  });
+const onListen = mod.default.onListen ?? ((_localAddr: Deno.NetAddr) => {});
 
 // Use an empty onListen callback to prevent Deno from logging
 const server = Deno.serve(

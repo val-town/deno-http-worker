@@ -19,7 +19,7 @@ export default async function (req: Request): Promise<Response> {
       const importValue = req.headers.get("X-VT-Import");
       if (!importValue) {
         // This request will error and future requests will hang.
-        return new Response(`No source or import value found`, { status: 400 });
+        return new Response("No source or import value found", { status: 400 });
       }
       handler = (await import(importValue)).default;
       initialized = true;
