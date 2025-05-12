@@ -13,10 +13,7 @@
     "build": "tsc --build",
     "prepare": "npm run lint && npm run build"
   },
-  "files": [
-    "dist",
-    "deno-bootstrap"
-  ],
+  "files": ["dist", "deno-bootstrap"],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/val-town/deno-http-worker.git"
@@ -39,6 +36,6 @@
     "eslint": "^8.57.0",
     "eslint-plugin-import": "^2.29.1",
     "typescript": "^5.4.5",
-    "vitest": "^2"
+    "vitest": "^3"
   }
 }
