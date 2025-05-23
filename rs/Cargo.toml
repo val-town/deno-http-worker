@@ -1,0 +1,26 @@
+[package]
+name = "deno-http-worker"
+version = "0.0.19"
+edition = "2021"
+description = "Securely spawn Deno workers from Rust using Tokio"
+license = "MIT"
+repository = "https://github.com/val-town/deno-http-worker"
+authors = ["Val Town"]
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+hyper = { version = "1.0", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.0"
+uuid = { version = "1.0", features = ["v4"] }
+tracing = "0.1"
+hyperlocal = "0.9"
+http-body-util = "0.1"
+thiserror = "1.0"
+libc = "0.2"
+
+[dev-dependencies]
+tokio-test = "0.4"
+tracing-subscriber = "0.3"
