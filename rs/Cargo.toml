@@ -18,7 +18,7 @@ uuid = { version = "1.0", features = ["v4"] }
 tracing = "0.1"
 hyperlocal = "0.9"
 http-body-util = "0.1"
-thiserror = "1.0"
+thiserror = "2.0"
 libc = "0.2"
 
 [dev-dependencies]
