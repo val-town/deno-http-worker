@@ -1,0 +1,7 @@
+{
+  "tasks": {
+    "test": "deno test --allow-all test/",
+    "lint": "deno lint src/ bootstrap/ test/",
+    "fmt": "deno fmt src/ bootstrap/ test/"
+  }
+}
