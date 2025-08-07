@@ -20,7 +20,7 @@
   },
   "type": "module",
   "engines": {
-    "node": "20 || 22"
+    "node": "20 || 22 || 24"
   },
   "author": "Val Town",
   "license": "MIT",
