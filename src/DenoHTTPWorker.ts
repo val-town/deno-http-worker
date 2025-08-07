@@ -341,7 +341,7 @@ class denoHTTPWorker {
     options: http.RequestOptions,
     callback: (response: http.IncomingMessage) => void
   ): http.ClientRequest {
-    options.headers = options.headers || {};
+    options.headers = (options.headers || {}) as http.OutgoingHttpHeaders;
 
     // TODO: ensure these are handled with the correct casing?
     delete options.headers["x-deno-worker-host"];
