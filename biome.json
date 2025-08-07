@@ -1,25 +1,23 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.9.1/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.1.4/schema.json",
   "formatter": {
     "enabled": true,
     "indentStyle": "space"
   },
   "files": {
-    "ignore": ["dist"]
+    "includes": ["**", "!**/dist"]
   },
-  "organizeImports": {
-    "enabled": false
-  },
+  "assist": { "actions": { "source": { "organizeImports": "off" } } },
   "linter": {
     "enabled": true,
     "rules": {
       "recommended": true,
       "complexity": {
         "noExtraBooleanCast": "error",
-        "noMultipleSpacesInRegularExpressionLiterals": "error",
         "noUselessCatch": "error",
         "noUselessSwitchCase": "off",
-        "useOptionalChain": "off"
+        "useOptionalChain": "off",
+        "noAdjacentSpacesInRegex": "error"
       },
       "a11y": {
         "useKeyWithClickEvents": "off",
@@ -36,7 +34,6 @@
         "noEmptyPattern": "error",
         "noGlobalObjectCalls": "error",
         "noInvalidConstructorSuper": "error",
-        "noNewSymbol": "error",
         "noNonoctalDecimalEscape": "error",
         "noPrecisionLoss": "error",
         "noUnknownFunction": "off",
@@ -49,23 +46,24 @@
         "noUnsafeOptionalChaining": "error",
         "useIsNan": "error",
         "useValidForDirection": "error",
-        "useYield": "error"
+        "useYield": "error",
+        "noInvalidBuiltinInstantiation": "error"
       },
       "style": {
         "noNonNullAssertion": "off",
         "noRestrictedGlobals": {
           "level": "error",
           "options": {
-            "deniedGlobals": [
-              "location",
-              "event",
-              "name",
-              "alert",
-              "confirm",
-              "self",
-              "top",
-              "history"
-            ]
+            "deniedGlobals": {
+              "location": "TODO: Add a custom message here.",
+              "event": "TODO: Add a custom message here.",
+              "name": "TODO: Add a custom message here.",
+              "alert": "TODO: Add a custom message here.",
+              "confirm": "TODO: Add a custom message here.",
+              "self": "TODO: Add a custom message here.",
+              "top": "TODO: Add a custom message here.",
+              "history": "TODO: Add a custom message here."
+            }
           }
         },
         "noParameterAssign": "off",
@@ -85,7 +83,7 @@
   },
   "overrides": [
     {
-      "include": ["*.test.*", "test/**/*"],
+      "includes": ["**/*.test.*", "**/test/**/*"],
       "linter": {
         "rules": {
           "style": {
