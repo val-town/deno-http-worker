@@ -356,13 +356,6 @@ class denoHTTPWorker implements DenoHTTPWorker {
     delete headers["x-deno-worker-host"]; // TODO: check if casing is OK
     delete headers["x-deno-worker-connection"];
     headers["X-Deno-Worker-URL"] = options.origin + options.path;
-    console.log("reqqq", {
-      ...options,
-      headers: headers,
-    }
-
-
-    )
 
     return this.#agent.request({
       ...options,

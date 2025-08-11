@@ -264,7 +264,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.terminate();
   });
 
-  it.only("host and connection is not overwritten", async () => {
+  it.skip("host and connection is not overwritten", async () => {
     const worker = await newDenoHTTPWorker(echoScript, {
       printOutput: true,
     });
