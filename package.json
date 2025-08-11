@@ -40,5 +40,8 @@
     "eslint-plugin-import": "^2.29.1",
     "typescript": "^5.4.5",
     "vitest": "^3"
+  },
+  "dependencies": {
+    "undici": "^7.13.0"
   }
 }
