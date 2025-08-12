@@ -103,7 +103,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.terminate();
   });
 
-  it("dont crash on socket removal", async () => {
+  it("don't crash on socket removal", async () => {
     const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
@@ -170,21 +170,16 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
 
     worker.terminate();
   });
+
   it("onError not handled", { timeout: 20_000 }, async () => {
-    // onError is not called in all cases, for example, here I can pass a
-    // readable stream and the error is only caught by the global onerror handler.
+    // onError is not called for errors that happen outside the request
     const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
-          const body = new ReadableStream({
-            start(controller) {
-              setTimeout(() => {
-                controller.enqueue(1);
-              }, 10);
-            },
-            cancel() {},
-          });
-          return new Response(body)
+          setTimeout(() => {
+            throw new Error("uncaught!")
+          })
+          return Response.json(null)
         }, onError (error: Error): Response {
           return Response.json({ error: error.message }, { status: 500 })
         }}
@@ -198,8 +193,35 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     for (;;) {
       const stderr = worker.stderr.read();
       if (stderr) {
-        console.log(stderr.toString());
-        expect(stderr.toString()).toContain("expected typed ArrayBufferView");
+        expect(stderr.toString()).toContain("Error: uncaught!");
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    worker.terminate();
+  });
+
+  it("unhandled rejection", { timeout: 20_000 }, async () => {
+    // onError is not called for unhandled rejections that happen outside the request
+    const worker = await newDenoHTTPWorker(
+      `
+        export default { async fetch (req: Request): Promise<Response> {
+          Promise.reject(new Error("uncaught!"))
+          return Response.json(null)
+        }, onError (error: Error): Response {
+          return Response.json({ error: error.message }, { status: 500 })
+        }}
+      `,
+      { printOutput: false }
+    );
+    jsonRequest(worker, "https://localhost/hello?isee=you", {
+      headers: { accept: "application/json" },
+    }).catch(() => {});
+
+    for (;;) {
+      const stderr = worker.stderr.read();
+      if (stderr) {
+        expect(stderr.toString()).toContain("Error: uncaught!");
         break;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
