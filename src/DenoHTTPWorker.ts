@@ -138,7 +138,7 @@ export const newDenoHTTPWorker = async (
   const allowReadFlagValue =
     typeof script === "string"
       ? socketFile
-      : `${socketFile},${script.href.replace("file://", "")}`;
+      : `${socketFile},${fileURLToPath(script)}`;
 
   let allowReadFound = false;
   let allowWriteFound = false;
@@ -182,6 +182,8 @@ export const newDenoHTTPWorker = async (
       ? _options.denoExecutable
       : (_options.denoExecutable[0] as string);
 
+  const bootstrap = await fs.readFile(_options.denoBootstrapScriptPath, "utf-8");
+
   return new Promise((resolve, reject) => {
     (async (): Promise<DenoHTTPWorker> => {
       const args = [
@@ -190,7 +192,7 @@ export const newDenoHTTPWorker = async (
           : _options.denoExecutable.slice(1)),
         "run",
         ..._options.runFlags,
-        _options.denoBootstrapScriptPath,
+        "data:text/typescript," + encodeURIComponent(bootstrap),
         ...scriptArgs,
       ];
       if (_options.printCommandAndArguments) {
@@ -351,10 +353,12 @@ class denoHTTPWorker {
     // (https://nodejs.org/api/http.html#new-agentoptions). We don't want these
     // to make it to Deno unless they are explicitly set by the user. So store
     // them to reconstruct on the other size.
-    if (options.headers.host)
+    if (options.headers.host) {
       options.headers["X-Deno-Worker-Host"] = options.headers.host;
-    if (options.headers.connection)
+    }
+    if (options.headers.connection) {
       options.headers["X-Deno-Worker-Connection"] = options.headers.connection;
+    }
 
     options.headers = {
       ...options.headers,
