@@ -2,12 +2,12 @@ import path, { resolve } from "node:path";
 import { spawn, type SpawnOptions } from "node:child_process";
 import type { Readable } from "node:stream";
 import readline from "node:readline";
-import http from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
 
 import { fileURLToPath } from "node:url";
 import undici from "undici";
+import { undiciHeadersAsRecord } from "./utils.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -216,7 +216,7 @@ export const newDenoHTTPWorker = async (
               signal
             )
           );
-          fs.rm(socketFile).catch(() => { });
+          fs.rm(socketFile).catch(() => {});
         } else {
           (worker as denoHTTPWorker)._terminate(code, signal);
         }
@@ -235,7 +235,7 @@ export const newDenoHTTPWorker = async (
       }
 
       // Wait for the socket file to be created by the Deno process.
-      for (; ;) {
+      for (;;) {
         if (exited) {
           break;
         }
@@ -319,7 +319,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
       forceKill(this.#process.pid!);
     }
     this.#agent.destroy();
-    fs.rm(this.#socketFile).catch(() => { });
+    fs.rm(this.#socketFile).catch(() => {});
     for (const onexit of this.#onexitListeners) {
       onexit(code ?? 1, signal ?? "");
     }
@@ -337,25 +337,15 @@ class denoHTTPWorker implements DenoHTTPWorker {
     // UndiciHeaders can be an array or an object, so we normalize so we can
     // manipulate the header options.
 
-    const headers: Record<string, string | string[]> = {};
-    if (Array.isArray(options.headers)) {
-      for (const [key, value] of options.headers) {
-        if (value !== undefined && key) {
-          headers[key.toLowerCase()] = value;
-        }
-      }
-    } else if (typeof options.headers === "object" && options.headers !== null) {
-      for (const [key, value] of Object.entries(options.headers)) {
-        if (typeof key === "string" && value !== undefined) {
-          headers[key.toLowerCase()] = value;
-        }
-      }
-    }
+    const headers = undiciHeadersAsRecord(options.headers || {});
 
-    // Now we can safely delete the property
-    delete headers["x-deno-worker-host"]; // TODO: check if casing is OK
-    delete headers["x-deno-worker-connection"];
     headers["X-Deno-Worker-URL"] = options.origin + options.path;
+    if (headers.host) {
+      headers["x-deno-worker-host"] = headers.host;
+    }
+    if (headers.connection) {
+      headers["x-deno-worker-connection"] = headers.connection;
+    }
 
     return this.#agent.request({
       ...options,

@@ -6,7 +6,7 @@ const importURL =
   scriptType === "import"
     ? script
     : `data:text/tsx,${encodeURIComponent(script)}`;
-    console.log(decodeURIComponent(importURL))
+console.log(decodeURIComponent(importURL));
 
 const mod = await import(importURL);
 if (!mod.default) {

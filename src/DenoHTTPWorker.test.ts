@@ -26,7 +26,7 @@ const jsonRequest = async (
     origin: urlObj.origin,
     headers: opts?.headers,
     body: opts?.body,
-    method: "POST"
+    method: "POST",
   });
 
   return resp.body.json();
@@ -100,7 +100,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.terminate();
   });
 
-  it.skip("dont crash on socket removal", async () => {
+  it("dont crash on socket removal", async () => {
     const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
@@ -119,7 +119,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.terminate();
   });
 
-  it.skip("json response multiple requests", async () => {
+  it("json response multiple requests", async () => {
     const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
@@ -140,13 +140,13 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       );
       expect(json).toEqual({
         ok: "https://localhost/hello?isee=you",
-        headers: { accept: "application/json" },
+        headers: { accept: "application/json", "content-length": "0" }, // undici adds content-length
       });
     }
     worker.terminate();
   });
 
-  it.skip("onError", async () => {
+  it("onError", async () => {
     const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
@@ -190,9 +190,9 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     );
     jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
-    }).catch(() => { });
+    }).catch(() => {});
 
-    for (; ;) {
+    for (;;) {
       const stderr = worker.stderr.read();
       if (stderr) {
         console.log(stderr.toString());
@@ -204,7 +204,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.terminate();
   });
 
-  it.skip("shutdown gracefully", async () => {
+  it("shutdown gracefully", async () => {
     const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
@@ -264,20 +264,17 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.terminate();
   });
 
-  it.skip("host and connection is not overwritten", async () => {
+  it("host and connection is not overwritten", async () => {
     const worker = await newDenoHTTPWorker(echoScript, {
       printOutput: true,
     });
     const resp: any = await jsonRequest(worker, "https://localhost/", {
-      headers: { connection: "keep-alive", host: "bear.example.com", "x-foo-bar": "buzz" },
+      headers: {
+        connection: "keep-alive",
+        host: "bear.example.com",
+        "x-foo-bar": "buzz",
+      },
     });
-    console.log("A", resp);
-    console.log("A", resp);
-    console.log("A", resp);
-    console.log("A", resp);
-    console.log("A", resp);
-    console.log("A", resp);
-    console.log("A", resp);
     expect(resp.headers.connection).toEqual("keep-alive");
     expect(resp.headers.host).toEqual("bear.example.com");
     expect(resp.headers["x-foo-bar"]).toEqual("buzz");
@@ -364,58 +361,54 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   //   worker.terminate();
   // });
 
-  // it.only("can implement val town with http.request", async () => {
-  //   const worker = await newDenoHTTPWorker(vtScript, { printOutput: true });
+  it("can implement val town with http.request", async () => {
+    const worker = await newDenoHTTPWorker(vtScript, { printOutput: true });
 
-  //   const t0 = performance.now();
-  //   const resp = await worker.request({
-  //     path: "/",
-  //     origin: "http://vt",
-  //     method: "POST",
-  //     headers: {
-  //       "Content-Type": "application/json",
-  //     },
-  //     body: `data:text/tsx,${encodeURIComponent(DEFAULT_HTTP_VAL)}`
-  //   })
-  //   const text = await resp.body.text();
-  //   expect(text).toEqual('{"ok":true}');
-  //   console.log("Double request http2 val:", performance.now() - t0);
-  //   // await initReq;
-  //   worker.terminate();
-  // });
+    const t0 = performance.now();
+    await worker.request({
+      path: "/",
+      origin: "http://vt",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: `data:text/tsx,${encodeURIComponent(DEFAULT_HTTP_VAL)}`,
+    });
+
+    const text = await worker
+      .request({
+        path: "/",
+        origin: "http://vt",
+        method: "GET",
+      })
+      .then((resp) => resp.body.text());
+
+    expect(text).toEqual('{"ok":true}');
+    console.log("Double request http2 val:", performance.now() - t0);
+    // await initReq;
+    worker.terminate();
+  });
   // it("val town import header", async () => {
-  //   let worker = await newDenoHTTPWorker(vtHeaderScript, { printOutput: true });
+  //   const worker = await newDenoHTTPWorker(vtHeaderScript, { printOutput: true });
 
   //   const t0 = performance.now();
-  //   let text = await new Promise((resolve) => {
-  //     let req = worker.request(
-  //       "https://localhost:1234",
-  //       {
-  //         headers: {
-  //           "X-VT-Import": `data:text/tsx,${encodeURIComponent(
-  //             DEFAULT_HTTP_VAL
-  //           )}`,
-  //         },
-  //       },
-  //       (resp) => {
-  //         const body: any[] = [];
-  //         resp.on("data", (chunk) => {
-  //           body.push(chunk);
-  //         });
-  //         resp.on("end", () => {
-  //           resolve(Buffer.concat(body).toString());
-  //         });
-  //       }
-  //     );
-  //     req.end();
-  //   });
+  //   const text = await worker.request({
+  //     url: "https://localhost:1234",
+  //     path: "/",
+  //     headers: {
+  //       "X-VT-Import": `data:text/tsx,${encodeURIComponent(
+  //         DEFAULT_HTTP_VAL
+  //       )}`,
+  //     },
+  //   }).then(resp => resp.body.text())
+
   //   expect(text).toEqual('{"ok":true}');
   //   console.log("single request:", performance.now() - t0);
   //   // await initReq;
   //   worker.terminate();
   // });
 
-  it.skip("can test that snippets in readme run successfully", async () => {
+  it("can test that snippets in readme run successfully", async () => {
     const rm = fs.readFileSync(path.resolve(__dirname, "../README.md"), {
       encoding: "utf-8",
     });
