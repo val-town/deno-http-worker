@@ -1,6 +1,6 @@
 {
   "name": "@valtown/deno-http-worker",
-  "version": "0.0.20",
+  "version": "0.0.21",
   "description": "Securely spawn Deno workers from Node.js",
   "main": "dist/index.js",
   "types": "./dist/index.d.ts",
