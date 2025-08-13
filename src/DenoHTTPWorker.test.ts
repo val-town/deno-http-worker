@@ -166,7 +166,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
 
     worker.terminate();
   });
-  it.skip("onError not handled", { timeout: 20_000 }, async () => {
+  it("onError not handled", { timeout: 20_000 }, async () => {
     // onError is not called in all cases, for example, here I can pass a
     // readable stream and the error is only caught by the global onerror handler.
     const worker = await newDenoHTTPWorker(
