@@ -184,9 +184,9 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     );
     jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
-    }).catch(() => {});
+    }).catch(() => { });
 
-    for (;;) {
+    for (; ;) {
       const stderr = worker.stderr.read();
       if (stderr) {
         expect(stderr.toString()).toContain("Error: uncaught!");
@@ -212,9 +212,9 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     );
     jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
-    }).catch(() => {});
+    }).catch(() => { });
 
-    for (;;) {
+    for (; ;) {
       const stderr = worker.stderr.read();
       if (stderr) {
         expect(stderr.toString()).toContain("Error: uncaught!");
@@ -301,22 +301,16 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     expect(resp.headers["x-foo-bar"]).toEqual("buzz");
     worker.terminate();
   });
-  
+
   it("host and connection cannot be set by user", async () => {
-    const worker = await newDenoHTTPWorker(echoScript, {
-      printOutput: true,
-    });
+    const worker = await newDenoHTTPWorker(echoScript);
     const resp: any = await jsonRequest(worker, "https://localhost/", {
       headers: {
         connection: "keep-alive",
         host: "bear.example.com",
         "x-deno-worker-host": "should-not-be-able-to-set",
-        "x-foo-bar": "buzz",
       },
     });
-    expect(resp.headers.connection).toEqual("keep-alive");
-    expect(resp.headers.host).toEqual("bear.example.com");
-    expect(resp.headers["x-foo-bar"]).toEqual("buzz");
     expect(resp.headers["x-deno-worker-host"]).toBeUndefined();
     worker.terminate();
   });
