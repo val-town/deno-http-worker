@@ -346,19 +346,17 @@ class denoHTTPWorker implements DenoHTTPWorker {
 
     // To prevent the user from setting these headers, we either update them to
     // the real host / connection, or clear them
+    headers.delete("x-deno-worker-host");
+    headers.delete("x-deno-worker-connection");
 
     const host = headers.get("host");
     if (host) {
       headers.set("x-deno-worker-host", host); // overwrites if set: https://developer.mozilla.org/en-US/docs/Web/API/Headers/set
-    } else {
-      headers.delete("x-deno-worker-host");
     }
 
     const connection = headers.get("connection");
     if (connection) {
       headers.set("x-deno-worker-connection", connection);
-    } else {
-      headers.delete("x-deno-worker-connection");
     }
 
     const resp = await this.#pool.request({
