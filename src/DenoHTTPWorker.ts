@@ -204,7 +204,7 @@ export const newDenoHTTPWorker = async (
       let running = false;
       let exited = false;
       let worker: DenoHTTPWorker | undefined = undefined;
-      process.on("exit", (code: number, signal: string) => {
+      process.on("exit", async (code: number, signal: string) => {
         exited = true;
         if (!running) {
           const stderr = process.stderr?.read()?.toString();
@@ -218,9 +218,9 @@ export const newDenoHTTPWorker = async (
               signal
             )
           );
-          fs.rm(socketFile).catch(() => { });
+          await fs.rm(socketFile).catch(() => { });
         } else {
-          (worker as denoHTTPWorker)._terminate(code, signal);
+          await (worker as denoHTTPWorker)._terminate(code, signal);
         }
       });
       options.onSpawn && options.onSpawn(process);
@@ -251,7 +251,7 @@ export const newDenoHTTPWorker = async (
       }
       worker = new denoHTTPWorker(socketFile, process, stdout, stderr);
       running = true;
-      await (worker as denoHTTPWorker).warmRequest();
+      (worker as denoHTTPWorker).warmRequest();
 
       return worker;
     })()
@@ -321,8 +321,10 @@ class denoHTTPWorker implements DenoHTTPWorker {
     if (this.#process && this.#process.exitCode === null) {
       forceKill(this.#process.pid!);
     }
-    this.#pool.destroy();
-    await fs.rm(this.#socketFile).catch(() => { });
+
+    await this.#pool.close();
+    fs.rm(this.#socketFile).catch(() => { });
+
     for (const onexit of this.#onexitListeners) {
       onexit(code ?? 1, signal ?? "");
     }
@@ -359,21 +361,20 @@ class denoHTTPWorker implements DenoHTTPWorker {
       headers.set("x-deno-worker-connection", connection);
     }
 
-    const resp = await this.#pool.request({
+    return this.#pool.request({
       ...options,
       origin: "http://deno",
       path: "/",
       query: {},
       headers,
-    });
-
-    return {
-      statusCode: resp.statusCode,
-      headers: resp.headers,
-      body: resp.body,
-      trailers: resp.trailers,
-      context: resp.context || {},
-    }
+    })
+      .then(resp => ({
+        statusCode: resp.statusCode,
+        headers: resp.headers,
+        body: resp.body,
+        trailers: resp.trailers,
+        context: resp.context || {},
+      }));
   }
 
   // We send this request to Deno so that we get a live connection in the
