@@ -19,8 +19,7 @@ let worker = await newDenoHTTPWorker(
 );
 
 const req = await worker.request({
-    origin: "https://hello",
-    path: "/world?query=param",
+    url: "https://hello/world?query=param",
     method: "GET"
 })
 const body = await req.body.json()
