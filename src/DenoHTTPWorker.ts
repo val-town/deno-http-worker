@@ -296,7 +296,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
   #stderr: Readable;
   #stdout: Readable;
   #terminated = false;
-  #agent: undici.Pool;
+  #pool: undici.Pool;
 
   constructor(
     socketFile: string,
@@ -310,7 +310,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
     this.#stderr = stderr;
     this.#stdout = stdout;
 
-    this.#agent = new undici.Pool("http://deno", { socketPath: socketFile })
+    this.#pool = new undici.Pool("http://deno", { socketPath: socketFile })
   }
 
   _terminate(code?: number, signal?: string) {
@@ -321,7 +321,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
     if (this.#process && this.#process.exitCode === null) {
       forceKill(this.#process.pid!);
     }
-    this.#agent.destroy();
+    this.#pool.destroy();
     fs.rm(this.#socketFile).catch(() => { });
     for (const onexit of this.#onexitListeners) {
       onexit(code ?? 1, signal ?? "");
@@ -354,7 +354,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
       headers.set("x-deno-worker-connection", connection);
     }
 
-    const resp = await this.#agent.request({
+    const resp = await this.#pool.request({
       ...options,
       headers,
     });
@@ -372,7 +372,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
   // http.Agent and subsequent requests are do not have to wait for a new
   // connection.
   async warmRequest() {
-    return this.#agent.request({
+    return this.#pool.request({
       origin: "http://deno",
       method: "GET",
       path: "/",
