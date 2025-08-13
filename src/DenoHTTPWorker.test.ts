@@ -19,11 +19,8 @@ const jsonRequest = async (
   url: string,
   opts?: { headers?: { [key: string]: string }; body?: string }
 ): Promise<any> => {
-  const urlObj = new URL(url);
-  const urlPath = urlObj.pathname + urlObj.search + urlObj.hash;
   const resp = await worker.request({
-    path: urlPath,
-    origin: urlObj.origin,
+    url,
     headers: new Headers(opts?.headers),
     body: opts?.body,
     method: "POST",
@@ -322,8 +319,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
 
     const t0 = performance.now();
     const resp = await worker.request({
-      path: "/hi",
-      origin: "http://localhost",
+      url: "http://localhost/hi",
       method: "GET",
     });
     const json = await resp.body.json();
@@ -343,8 +339,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
 
     const t0 = performance.now();
     await worker.request({
-      path: "/",
-      origin: "http://vt",
+      url: "http://vt/",
       method: "POST",
       headers: new Headers({
         "Content-Type": "application/json",
@@ -354,8 +349,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
 
     const text = await worker
       .request({
-        path: "/",
-        origin: "http://vt",
+        url: "http://vt/",
         method: "GET",
       })
       .then((resp) => resp.body.text());

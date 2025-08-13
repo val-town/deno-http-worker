@@ -342,7 +342,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
 
     const headers = options.headers || new Headers();
 
-    headers.set("X-Deno-Worker-URL", options.origin + options.path);
+    headers.set("x-deno-worker-url", options.url);
 
     // To prevent the user from setting these headers, we either update them to
     // the real host / connection, or clear them
@@ -362,6 +362,8 @@ class denoHTTPWorker implements DenoHTTPWorker {
     const resp = await this.#pool.request({
       ...options,
       origin: "http://deno",
+      path: "/",
+      query: {},
       headers,
     });
 
