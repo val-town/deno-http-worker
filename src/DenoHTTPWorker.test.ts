@@ -24,7 +24,7 @@ const jsonRequest = async (
   const resp = await worker.request({
     path: urlPath,
     origin: urlObj.origin,
-    headers: opts?.headers,
+    headers: new Headers(opts?.headers),
     body: opts?.body,
     method: "POST",
   });
@@ -369,9 +369,9 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       path: "/",
       origin: "http://vt",
       method: "POST",
-      headers: {
+      headers: new Headers({
         "Content-Type": "application/json",
-      },
+      }),
       body: `data:text/tsx,${encodeURIComponent(DEFAULT_HTTP_VAL)}`,
     });
 

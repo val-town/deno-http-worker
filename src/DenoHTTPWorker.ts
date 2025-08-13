@@ -7,7 +7,7 @@ import os from "node:os";
 
 import { fileURLToPath } from "node:url";
 import undici from "undici";
-import { undiciHeadersAsRecord } from "./utils.js";
+import type { ResponseData, RequestOptions } from "./types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -216,7 +216,7 @@ export const newDenoHTTPWorker = async (
               signal
             )
           );
-          fs.rm(socketFile).catch(() => {});
+          fs.rm(socketFile).catch(() => { });
         } else {
           (worker as denoHTTPWorker)._terminate(code, signal);
         }
@@ -235,7 +235,7 @@ export const newDenoHTTPWorker = async (
       }
 
       // Wait for the socket file to be created by the Deno process.
-      for (;;) {
+      for (; ;) {
         if (exited) {
           break;
         }
@@ -275,7 +275,7 @@ export interface DenoHTTPWorker {
    * request calls undici.request but patches the options to work with our
    * connection pool and safely handle rewriting various headers.
    */
-  request: typeof undici.Pool.prototype.request;
+  request: (ops: RequestOptions) => Promise<ResponseData>;
 
   get stdout(): Readable;
 
@@ -307,7 +307,8 @@ class denoHTTPWorker implements DenoHTTPWorker {
     this.#socketFile = socketFile;
     this.#stderr = stderr;
     this.#stdout = stdout;
-    this.#agent = new undici.Pool("http://deno", { socketPath: socketFile });
+
+    this.#agent = new undici.Pool("http://deno", { socketPath: socketFile })
   }
 
   _terminate(code?: number, signal?: string) {
@@ -319,7 +320,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
       forceKill(this.#process.pid!);
     }
     this.#agent.destroy();
-    fs.rm(this.#socketFile).catch(() => {});
+    fs.rm(this.#socketFile).catch(() => { });
     for (const onexit of this.#onexitListeners) {
       onexit(code ?? 1, signal ?? "");
     }
@@ -333,24 +334,36 @@ class denoHTTPWorker implements DenoHTTPWorker {
     this.#process.kill("SIGINT");
   }
 
-  async request(options: undici.Dispatcher.RequestOptions) {
+  async request(options: RequestOptions): Promise<ResponseData> {
     // UndiciHeaders can be an array or an object, so we normalize so we can
     // manipulate the header options.
 
-    const headers = undiciHeadersAsRecord(options.headers || {});
+    const headers = options.headers || new Headers();
 
-    headers["X-Deno-Worker-URL"] = options.origin + options.path;
-    if (headers.host) {
-      headers["x-deno-worker-host"] = headers.host;
-    }
-    if (headers.connection) {
-      headers["x-deno-worker-connection"] = headers.connection;
+    headers.set("X-Deno-Worker-URL", options.origin + options.path);
+
+    const host = headers.get("host");
+    if (host) {
+      headers.set("x-deno-worker-host", host); // overwrites if set: https://developer.mozilla.org/en-US/docs/Web/API/Headers/set
     }
 
-    return this.#agent.request({
+    const connection = headers.get("connection");
+    if (connection) {
+      headers.set("x-deno-worker-connection", connection);
+    }
+
+    const resp = await this.#agent.request({
       ...options,
-      headers: headers,
+      headers,
     });
+
+    return {
+      statusCode: resp.statusCode,
+      headers: resp.headers,
+      body: resp.body,
+      trailers: resp.trailers,
+      context: resp.context || {},
+    }
   }
 
   // We send this request to Deno so that we get a live connection in the
