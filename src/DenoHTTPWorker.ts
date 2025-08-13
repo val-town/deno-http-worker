@@ -361,6 +361,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
 
     const resp = await this.#pool.request({
       ...options,
+      origin: "http://deno",
       headers,
     });
 
