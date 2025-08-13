@@ -183,6 +183,8 @@ export const newDenoHTTPWorker = async (
       ? _options.denoExecutable
       : (_options.denoExecutable[0] as string);
 
+  const bootstrap = await fs.readFile(_options.denoBootstrapScriptPath, "utf-8");
+
   return new Promise((resolve, reject) => {
     (async (): Promise<DenoHTTPWorker> => {
       const args = [
@@ -191,7 +193,7 @@ export const newDenoHTTPWorker = async (
           : _options.denoExecutable.slice(1)),
         "run",
         ..._options.runFlags,
-        _options.denoBootstrapScriptPath,
+        "data:text/typescript," + encodeURIComponent(bootstrap),
         ...scriptArgs,
       ];
       if (_options.printCommandAndArguments) {
