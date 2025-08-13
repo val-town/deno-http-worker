@@ -47,7 +47,6 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   beforeAll(() => {
     // Clean up sockets that might have been left around during terminated test
     // runs.
-    // biome-ignore lint/complexity/noForEach: this is a test file
     fs.readdirSync(".").forEach((file) => {
       if (path.basename(file).endsWith("-deno-http.sock")) {
         fs.rmSync(file);
@@ -100,7 +99,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.terminate();
   });
 
-  it("dont crash on socket removal", async () => {
+  it("don't crash on socket removal", async () => {
     const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
@@ -173,15 +172,10 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
-          const body = new ReadableStream({
-            start(controller) {
-              setTimeout(() => {
-                controller.enqueue(1);
-              }, 10);
-            },
-            cancel() {},
-          });
-          return new Response(body)
+          setTimeout(() => {
+            throw new Error("uncaught!")
+          })
+          return Response.json(null)
         }, onError (error: Error): Response {
           return Response.json({ error: error.message }, { status: 500 })
         }}
@@ -195,8 +189,35 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     for (;;) {
       const stderr = worker.stderr.read();
       if (stderr) {
-        console.log(stderr.toString());
-        expect(stderr.toString()).toContain("expected typed ArrayBufferView");
+        expect(stderr.toString()).toContain("Error: uncaught!");
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    worker.terminate();
+  });
+
+  it("unhandled rejection", { timeout: 20_000 }, async () => {
+    // onError is not called for unhandled rejections that happen outside the request
+    const worker = await newDenoHTTPWorker(
+      `
+        export default { async fetch (req: Request): Promise<Response> {
+          Promise.reject(new Error("uncaught!"))
+          return Response.json(null)
+        }, onError (error: Error): Response {
+          return Response.json({ error: error.message }, { status: 500 })
+        }}
+      `,
+      { printOutput: false }
+    );
+    jsonRequest(worker, "https://localhost/hello?isee=you", {
+      headers: { accept: "application/json" },
+    }).catch(() => {});
+
+    for (;;) {
+      const stderr = worker.stderr.read();
+      if (stderr) {
+        expect(stderr.toString()).toContain("Error: uncaught!");
         break;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
