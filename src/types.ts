@@ -1,7 +1,5 @@
 import type { Readable } from 'node:stream';
 import type { Dispatcher, FormData } from 'undici'
-import type { IncomingHttpHeaders } from 'undici/types/header.js';
-import type BodyReadable from 'undici/types/readable.js';
 
 export type RequestOptions = { // partially derived from undici.Dispatcher.RequestOptions
     url: string;
@@ -20,8 +18,8 @@ export type RequestOptions = { // partially derived from undici.Dispatcher.Reque
 
 export type ResponseData = { // partially derived from undici.Dispatcher.ResponseData
     statusCode: number;
-    headers: IncomingHttpHeaders;
-    body: BodyReadable.default;
+    headers: Dispatcher.ResponseData['headers'];
+    body:  Dispatcher.ResponseData['body'];
     trailers: Record<string, string>;
     context: object;
 }

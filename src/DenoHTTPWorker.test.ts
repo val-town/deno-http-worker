@@ -70,7 +70,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       }
     );
     expect(pid).toBeDefined();
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("alternate spawnFunc can be provided", async () => {
@@ -93,7 +93,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       }
     );
     expect(firstArg).toEqual("run");
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("don't crash on socket removal", async () => {
@@ -112,7 +112,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     expect(json).toEqual({
       ok: "https://localhost/hello?isee=you",
     });
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("json response multiple requests", async () => {
@@ -139,7 +139,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
         headers: { accept: "application/json", "content-length": "0" }, // undici adds content-length
       });
     }
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("onError", async () => {
@@ -161,7 +161,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
         "Return value from serve handler must be a response or a promise resolving to a response",
     });
 
-    worker.terminate();
+    await worker.terminate();
   });
   it("onError not handled", { timeout: 20_000 }, async () => {
     // onError is not called in all cases, for example, here I can pass a
@@ -191,7 +191,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("unhandled rejection", { timeout: 20_000 }, async () => {
@@ -219,7 +219,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("shutdown gracefully", async () => {
@@ -266,7 +266,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
         runFlags: [flag],
       });
       await jsonRequest(worker, "http://localhost");
-      worker.terminate();
+      await worker.terminate();
     });
   });
 
@@ -279,7 +279,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     });
 
     await jsonRequest(worker, "http://localhost");
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("host and connection is not overwritten", async () => {
@@ -296,7 +296,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     expect(resp.headers.connection).toEqual("keep-alive");
     expect(resp.headers.host).toEqual("bear.example.com");
     expect(resp.headers["x-foo-bar"]).toEqual("buzz");
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("host and connection cannot be set by user", async () => {
@@ -309,7 +309,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       },
     });
     expect(resp.headers["x-deno-worker-host"]).toBeUndefined();
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("use http directly", async () => {
@@ -331,7 +331,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       body: "",
       method: "GET",
     });
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("can implement val town with http.request", async () => {
@@ -357,7 +357,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     expect(text).toEqual('{"ok":true}');
     console.log("Double request http2 val:", performance.now() - t0);
     // await initReq;
-    worker.terminate();
+    await worker.terminate();
   });
 
   // it("val town import header", async () => {

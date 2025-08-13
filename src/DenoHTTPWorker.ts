@@ -265,7 +265,7 @@ export interface DenoHTTPWorker {
    * Terminate the worker. This kills the process with SIGKILL if it is still
    * running, closes the http2 connection, and deletes the socket file.
    */
-  terminate(): void;
+  terminate(): Promise<void>;
 
   /**
    * Gracefully shuts down the worker process and waits for any unresolved
@@ -313,7 +313,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
     this.#pool = new undici.Pool("http://deno", { socketPath: socketFile })
   }
 
-  _terminate(code?: number, signal?: string) {
+  async _terminate(code?: number, signal?: string) {
     if (this.#terminated) {
       return;
     }
@@ -322,14 +322,14 @@ class denoHTTPWorker implements DenoHTTPWorker {
       forceKill(this.#process.pid!);
     }
     this.#pool.destroy();
-    fs.rm(this.#socketFile).catch(() => { });
+    await fs.rm(this.#socketFile).catch(() => { });
     for (const onexit of this.#onexitListeners) {
       onexit(code ?? 1, signal ?? "");
     }
   }
 
   terminate() {
-    this._terminate();
+    return this._terminate();
   }
 
   shutdown() {
@@ -351,7 +351,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
 
     const host = headers.get("host");
     if (host) {
-      headers.set("x-deno-worker-host", host); // overwrites if set: https://developer.mozilla.org/en-US/docs/Web/API/Headers/set
+      headers.set("x-deno-worker-host", host);
     }
 
     const connection = headers.get("connection");
@@ -379,8 +379,8 @@ class denoHTTPWorker implements DenoHTTPWorker {
   // We send this request to Deno so that we get a live connection in the
   // http.Agent and subsequent requests are do not have to wait for a new
   // connection.
-  async warmRequest() {
-    return this.#pool.request({
+  warmRequest() {
+    this.#pool.request({
       origin: "http://deno",
       method: "GET",
       path: "/",
