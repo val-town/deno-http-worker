@@ -139,7 +139,7 @@ export const newDenoHTTPWorker = async (
   const allowReadFlagValue =
     typeof script === "string"
       ? socketFile
-      : `${socketFile},${script.href.replace("file://", "")}`;
+      : `${socketFile},${fileURLToPath(script)}`;
 
   let allowReadFound = false;
   let allowWriteFound = false;
