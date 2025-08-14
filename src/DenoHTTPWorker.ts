@@ -271,7 +271,7 @@ export interface DenoHTTPWorker {
    * Gracefully shuts down the worker process and waits for any unresolved
    * promises to exit.
    */
-  shutdown(): void;
+  shutdown(): Promise<void>;
 
   /**
    * request calls undici.request but patches the options to work with our
@@ -317,13 +317,14 @@ class denoHTTPWorker implements DenoHTTPWorker {
     if (this.#terminated) {
       return;
     }
+
+    await this.#pool.close(); // Make sure we're not writing to the pool anymore
     this.#terminated = true;
     if (this.#process && this.#process.exitCode === null) {
       forceKill(this.#process.pid!);
     }
 
-    await this.#pool.close();
-    fs.rm(this.#socketFile).catch(() => { });
+    await fs.rm(this.#socketFile).catch(() => { });
 
     for (const onexit of this.#onexitListeners) {
       onexit(code ?? 1, signal ?? "");
@@ -334,8 +335,13 @@ class denoHTTPWorker implements DenoHTTPWorker {
     return this._terminate();
   }
 
-  shutdown() {
+  async shutdown() {
+    await this.#pool.close();
+    console.log("Shutting down Deno worker...");
     this.#process.kill("SIGINT");
+    await new Promise<void>((res) => {
+      this.#process.on("exit", res);
+    });
   }
 
   async request(options: RequestOptions): Promise<ResponseData> {
