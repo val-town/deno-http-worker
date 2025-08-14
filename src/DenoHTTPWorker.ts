@@ -336,7 +336,6 @@ class denoHTTPWorker implements DenoHTTPWorker {
   }
 
   async shutdown() {
-    await this.#pool.close();
     console.log("Shutting down Deno worker...");
     this.#process.kill("SIGINT");
     await new Promise<void>((res) => {

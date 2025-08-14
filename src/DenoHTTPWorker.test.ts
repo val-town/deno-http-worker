@@ -245,10 +245,12 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       });
     });
     const json = await jsonRequest(worker, "https://localhost/hello?isee=you");
+    console.log(json)
     expect(json).toEqual({
       ok: "https://localhost/hello?isee=you",
     });
-    worker.shutdown();
+    console.log("OKK")
+    void worker.shutdown();
     await exitPromise;
   });
 
