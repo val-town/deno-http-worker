@@ -73,7 +73,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     await worker.terminate();
   });
 
-  it.only("alternate spawnFunc can be provided", async () => {
+  it("alternate spawnFunc can be provided", async () => {
     let firstArg = "";
     const worker = await newDenoHTTPWorker(
       `
