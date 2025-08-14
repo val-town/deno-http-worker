@@ -331,8 +331,8 @@ class denoHTTPWorker implements DenoHTTPWorker {
     }
   }
 
-  terminate() {
-    return this._terminate();
+  async terminate() {
+    return await this._terminate();
   }
 
   async shutdown() {
