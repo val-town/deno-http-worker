@@ -366,7 +366,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
       headers.set("x-deno-worker-connection", connection);
     }
 
-    return this.#pool.request({
+    return await this.#pool.request({
       ...options,
       origin: "http://deno",
       path: "/",
@@ -385,8 +385,8 @@ class denoHTTPWorker implements DenoHTTPWorker {
   // We send this request to Deno so that we get a live connection in the
   // http.Agent and subsequent requests are do not have to wait for a new
   // connection.
-  warmRequest() {
-    this.#pool.request({
+  async warmRequest() {
+    return await this.#pool.request({
       origin: "http://deno",
       method: "GET",
       path: "/",
