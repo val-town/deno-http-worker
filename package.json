@@ -1,6 +1,6 @@
 {
   "name": "@valtown/deno-http-worker",
-  "version": "0.0.21",
+  "version": "1.0.0",
   "description": "Securely spawn Deno workers from Node.js",
   "main": "dist/index.js",
   "types": "./dist/index.d.ts",
@@ -40,5 +40,8 @@
     "eslint-plugin-import": "^2.29.1",
     "typescript": "^5.4.5",
     "vitest": "^3"
+  },
+  "dependencies": {
+    "undici": "^7.13.0"
   }
 }
