@@ -2,8 +2,8 @@ name: Publish package
 
 on:
   push:
-    branches:
-      - main
+    # branches:
+      # - main
   workflow_dispatch:
 
 jobs:
@@ -20,3 +20,4 @@ jobs:
         with:
           token: ${{ secrets.NPM_ACCESS_TOKEN }}
           access: public
+          dry-run: true
