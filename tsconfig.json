@@ -17,5 +17,5 @@
     "rootDir": "./src",
     "outDir": "./dist"
   },
-  "exclude": ["dist", "deno-bootstrap", "src/test"]
+  "exclude": ["dist", "deno-bootstrap", "src/test", "**/*.test.ts"]
 }
