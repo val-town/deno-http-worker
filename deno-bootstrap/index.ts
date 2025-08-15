@@ -19,7 +19,7 @@ const onError = mod.default.onError ??
     console.error(error);
     return new Response("Internal Server Error", { status: 500 });
   });
-const onListen = mod.default.onListen ?? ((_localAddr: Deno.NetAddr) => {});
+const onListen = mod.default.onListen ?? ((_localAddr: Deno.NetAddr) => { });
 
 // Use an empty onListen callback to prevent Deno from logging
 const server = Deno.serve(

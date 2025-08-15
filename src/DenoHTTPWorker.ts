@@ -2,11 +2,12 @@ import path, { resolve } from "node:path";
 import { spawn, type SpawnOptions } from "node:child_process";
 import type { Readable } from "node:stream";
 import readline from "node:readline";
-import http from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
 
 import { fileURLToPath } from "node:url";
+import undici from "undici";
+import type { ResponseData, RequestOptions } from "./types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -203,7 +204,7 @@ export const newDenoHTTPWorker = async (
       let running = false;
       let exited = false;
       let worker: DenoHTTPWorker | undefined = undefined;
-      process.on("exit", (code: number, signal: string) => {
+      process.on("exit", async (code: number, signal: string) => {
         exited = true;
         if (!running) {
           const stderr = process.stderr?.read()?.toString();
@@ -217,9 +218,9 @@ export const newDenoHTTPWorker = async (
               signal
             )
           );
-          fs.rm(socketFile).catch(() => {});
+          await fs.rm(socketFile).catch(() => { });
         } else {
-          (worker as denoHTTPWorker)._terminate(code, signal);
+          await (worker as denoHTTPWorker)._terminate(code, signal);
         }
       });
       options.onSpawn && options.onSpawn(process);
@@ -236,7 +237,7 @@ export const newDenoHTTPWorker = async (
       }
 
       // Wait for the socket file to be created by the Deno process.
-      for (;;) {
+      for (; ;) {
         if (exited) {
           break;
         }
@@ -264,23 +265,19 @@ export interface DenoHTTPWorker {
    * Terminate the worker. This kills the process with SIGKILL if it is still
    * running, closes the http2 connection, and deletes the socket file.
    */
-  terminate(): void;
+  terminate(): Promise<void>;
 
   /**
    * Gracefully shuts down the worker process and waits for any unresolved
    * promises to exit.
    */
-  shutdown(): void;
+  shutdown(): Promise<void>;
 
   /**
-   * request calls http.request but patches the options to work with our
+   * request calls undici.request but patches the options to work with our
    * connection pool and safely handle rewriting various headers.
    */
-  request(
-    url: string | URL,
-    options: http.RequestOptions,
-    callback: (response: http.IncomingMessage) => void
-  ): http.ClientRequest;
+  request: (ops: RequestOptions) => Promise<ResponseData>;
 
   get stdout(): Readable;
 
@@ -292,14 +289,14 @@ export interface DenoHTTPWorker {
   addEventListener(type: "exit", listener: OnExitListener): void;
 }
 
-class denoHTTPWorker {
+class denoHTTPWorker implements DenoHTTPWorker {
   #onexitListeners: OnExitListener[];
   #process: MinimalChildProcess;
   #socketFile: string;
   #stderr: Readable;
   #stdout: Readable;
   #terminated = false;
-  #agent: http.Agent;
+  #pool: undici.Pool;
 
   constructor(
     socketFile: string,
@@ -312,82 +309,87 @@ class denoHTTPWorker {
     this.#socketFile = socketFile;
     this.#stderr = stderr;
     this.#stdout = stdout;
-    this.#agent = new http.Agent({ keepAlive: true });
+
+    this.#pool = new undici.Pool("http://deno", { socketPath: socketFile })
   }
 
-  _terminate(code?: number, signal?: string) {
+  async _terminate(code?: number, signal?: string) {
     if (this.#terminated) {
       return;
     }
+
+    await this.#pool.close(); // Make sure we're not writing to the pool anymore
     this.#terminated = true;
     if (this.#process && this.#process.exitCode === null) {
       forceKill(this.#process.pid!);
     }
-    this.#agent.destroy();
-    fs.rm(this.#socketFile).catch(() => {});
+
+    await fs.rm(this.#socketFile).catch(() => { });
+
     for (const onexit of this.#onexitListeners) {
       onexit(code ?? 1, signal ?? "");
     }
   }
 
-  terminate() {
-    this._terminate();
+  async terminate() {
+    return await this._terminate();
   }
 
-  shutdown() {
+  async shutdown() {
+    console.log("Shutting down Deno worker...");
     this.#process.kill("SIGINT");
+    await new Promise<void>((res) => {
+      this.#process.on("exit", res);
+    });
   }
 
-  request(
-    url: string | URL,
-    options: http.RequestOptions,
-    callback: (response: http.IncomingMessage) => void
-  ): http.ClientRequest {
-    options.headers = (options.headers || {}) as http.OutgoingHttpHeaders;
+  async request(options: RequestOptions): Promise<ResponseData> {
+    // UndiciHeaders can be an array or an object, so we normalize so we can
+    // manipulate the header options.
 
-    // TODO: ensure these are handled with the correct casing?
-    delete options.headers["x-deno-worker-host"];
-    delete options.headers["x-deno-worker-connection"];
+    const headers = options.headers || new Headers();
 
-    // NodeJS will send both the host and the connection headers
-    // (https://nodejs.org/api/http.html#new-agentoptions). We don't want these
-    // to make it to Deno unless they are explicitly set by the user. So store
-    // them to reconstruct on the other size.
-    if (options.headers.host) {
-      options.headers["X-Deno-Worker-Host"] = options.headers.host;
-    }
-    if (options.headers.connection) {
-      options.headers["X-Deno-Worker-Connection"] = options.headers.connection;
+    headers.set("x-deno-worker-url", options.url);
+
+    // To prevent the user from setting these headers, we either update them to
+    // the real host / connection, or clear them
+    headers.delete("x-deno-worker-host");
+    headers.delete("x-deno-worker-connection");
+
+    const host = headers.get("host");
+    if (host) {
+      headers.set("x-deno-worker-host", host);
     }
 
-    options.headers = {
-      ...options.headers,
-      "X-Deno-Worker-URL": typeof url === "string" ? url : url.toString(),
-    };
-    url = "http://deno";
-    options.agent = this.#agent;
-    options.socketPath = this.#socketFile;
-    return http.request(url, options, callback);
+    const connection = headers.get("connection");
+    if (connection) {
+      headers.set("x-deno-worker-connection", connection);
+    }
+
+    return await this.#pool.request({
+      ...options,
+      origin: "http://deno",
+      path: "/",
+      query: {},
+      headers,
+    })
+      .then(resp => ({
+        statusCode: resp.statusCode,
+        headers: resp.headers,
+        body: resp.body,
+        trailers: resp.trailers,
+        context: resp.context || {},
+      }));
   }
 
   // We send this request to Deno so that we get a live connection in the
   // http.Agent and subsequent requests are do not have to wait for a new
   // connection.
   async warmRequest() {
-    return new Promise<void>((resolve, reject) => {
-      const req = http.request(
-        "http://deno",
-        { agent: this.#agent, socketPath: this.#socketFile },
-        (resp) => {
-          resp.on("error", reject);
-          resp.on("data", () => {});
-          resp.on("close", () => {
-            resolve();
-          });
-        }
-      );
-      req.on("error", reject);
-      req.end();
+    return await this.#pool.request({
+      origin: "http://deno",
+      method: "GET",
+      path: "/",
     });
   }
 

@@ -14,25 +14,19 @@ const DEFAULT_HTTP_VAL = `export default async function (req: Request): Promise<
   return Response.json({ ok: true })
 } `;
 
-const jsonRequest = (
+const jsonRequest = async (
   worker: DenoHTTPWorker,
   url: string,
   opts?: { headers?: { [key: string]: string }; body?: string }
 ): Promise<any> => {
-  return new Promise((resolve, reject) => {
-    const req = worker.request(url, opts || {}, (resp) => {
-      const body: any[] = [];
-      resp.on("error", reject);
-      resp.on("data", (chunk) => {
-        body.push(chunk);
-      });
-      resp.on("end", () => {
-        resolve(JSON.parse(Buffer.concat(body).toString()));
-      });
-    });
-    req.on("error", reject);
-    req.end();
+  const resp = await worker.request({
+    url,
+    headers: new Headers(opts?.headers),
+    body: opts?.body,
+    method: "POST",
   });
+
+  return resp.body.json();
 };
 
 test("EarlyExitDenoHTTPWorkerError", () => {
@@ -50,7 +44,6 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   beforeAll(() => {
     // Clean up sockets that might have been left around during terminated test
     // runs.
-    // biome-ignore lint/complexity/noForEach: this is a test file
     fs.readdirSync(".").forEach((file) => {
       if (path.basename(file).endsWith("-deno-http.sock")) {
         fs.rmSync(file);
@@ -77,7 +70,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       }
     );
     expect(pid).toBeDefined();
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("alternate spawnFunc can be provided", async () => {
@@ -100,7 +93,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       }
     );
     expect(firstArg).toEqual("run");
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("don't crash on socket removal", async () => {
@@ -119,7 +112,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     expect(json).toEqual({
       ok: "https://localhost/hello?isee=you",
     });
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("json response multiple requests", async () => {
@@ -143,10 +136,10 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       );
       expect(json).toEqual({
         ok: "https://localhost/hello?isee=you",
-        headers: { accept: "application/json" },
+        headers: { accept: "application/json", "content-length": "0" }, // undici adds content-length
       });
     }
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("onError", async () => {
@@ -168,11 +161,11 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
         "Return value from serve handler must be a response or a promise resolving to a response",
     });
 
-    worker.terminate();
+    await worker.terminate();
   });
-
   it("onError not handled", { timeout: 20_000 }, async () => {
-    // onError is not called for errors that happen outside the request
+    // onError is not called in all cases, for example, here I can pass a
+    // readable stream and the error is only caught by the global onerror handler.
     const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
@@ -188,9 +181,9 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     );
     jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
-    }).catch(() => {});
+    }).catch(() => { });
 
-    for (;;) {
+    for (; ;) {
       const stderr = worker.stderr.read();
       if (stderr) {
         expect(stderr.toString()).toContain("Error: uncaught!");
@@ -198,7 +191,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("unhandled rejection", { timeout: 20_000 }, async () => {
@@ -216,9 +209,9 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     );
     jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
-    }).catch(() => {});
+    }).catch(() => { });
 
-    for (;;) {
+    for (; ;) {
       const stderr = worker.stderr.read();
       if (stderr) {
         expect(stderr.toString()).toContain("Error: uncaught!");
@@ -226,7 +219,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("shutdown gracefully", async () => {
@@ -252,10 +245,12 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       });
     });
     const json = await jsonRequest(worker, "https://localhost/hello?isee=you");
+    console.log(json)
     expect(json).toEqual({
       ok: "https://localhost/hello?isee=you",
     });
-    worker.shutdown();
+    console.log("OKK")
+    void worker.shutdown();
     await exitPromise;
   });
 
@@ -286,7 +281,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     });
 
     await jsonRequest(worker, "http://localhost");
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("host and connection is not overwritten", async () => {
@@ -294,35 +289,30 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       printOutput: true,
     });
     const resp: any = await jsonRequest(worker, "https://localhost/", {
-      headers: { connection: "happy", host: "fish" },
+      headers: {
+        connection: "keep-alive",
+        host: "bear.example.com",
+        "x-foo-bar": "buzz",
+      },
     });
-    expect(resp.headers.connection).toEqual("happy");
-    expect(resp.headers.host).toEqual("fish");
-    worker.terminate();
+    expect(resp.headers.connection).toEqual("keep-alive");
+    expect(resp.headers.host).toEqual("bear.example.com");
+    expect(resp.headers["x-foo-bar"]).toEqual("buzz");
+    await worker.terminate();
   });
 
-  // it("json response", async () => {
-  //   let worker = await newDenoHTTPWorker(echoScript);
-
-  //   const t0 = performance.now();
-  //   let resp = (await worker.client
-  //     .post("https://localhost/", { json: { ok: true } })
-  //     .json()) as any;
-  //   expect(resp.body).toEqual('{"ok":true}');
-  //   console.log("Got time", performance.now() - t0);
-
-  //   // TODO: test against streaming resp as well as request body
-  //   let req = worker.client.post("https://localhost/", {
-  //     body: fs.createReadStream(import.meta.url.replace("file://", "")),
-  //   });
-
-  //   let body: any = await req.json();
-  //   expect(body.body).toEqual(
-  //     fs.readFileSync(import.meta.url.replace("file://", "")).toString()
-  //   );
-
-  //   worker.terminate();
-  // });
+  it("host and connection cannot be set by user", async () => {
+    const worker = await newDenoHTTPWorker(echoScript);
+    const resp: any = await jsonRequest(worker, "https://localhost/", {
+      headers: {
+        connection: "keep-alive",
+        host: "bear.example.com",
+        "x-deno-worker-host": "should-not-be-able-to-set",
+      },
+    });
+    expect(resp.headers["x-deno-worker-host"]).toBeUndefined();
+    await worker.terminate();
+  });
 
   it("use http directly", async () => {
     const worker = await newDenoHTTPWorker(echoScript, { printOutput: true });
@@ -330,18 +320,12 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     const t0 = performance.now();
-    const json = await new Promise((resolve) => {
-      const req = worker.request("http://localhost/hi", {}, (resp) => {
-        const body: any[] = [];
-        resp.on("data", (chunk) => {
-          body.push(chunk);
-        });
-        resp.on("end", () => {
-          resolve(JSON.parse(Buffer.concat(body).toString()));
-        });
-      });
-      req.end();
+    const resp = await worker.request({
+      url: "http://localhost/hi",
+      method: "GET",
     });
+    const json = await resp.body.json();
+
     console.log("http request time", performance.now() - t0);
     expect(json).toEqual({
       url: "http://localhost/hi",
@@ -349,118 +333,49 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       body: "",
       method: "GET",
     });
-    worker.terminate();
+    await worker.terminate();
   });
-
-  // it("post with body", async () => {
-  //   let worker = await newDenoHTTPWorker(`
-  //       export default async function (req: Request): Promise<Response> {
-  //         let body = await req.text();
-  //         return Response.json({ length: body.length })
-  //       }
-  //     `);
-
-  //   let resp = worker.client("https://localhost:8080/", {
-  //     body: "hello",
-  //     method: "POST",
-  //   });
-  //   expect(await resp.json()).toEqual({ length: 5 });
-  //   worker.terminate();
-  // });
-
-  // it("can implement val town", async () => {
-  //   let worker = await newDenoHTTPWorker(vtScript, { printOutput: true });
-
-  //   const t0 = performance.now();
-  //   let first = worker.client.post("https://localhost:8080/", {
-  //     body: "data:text/tsx," + encodeURIComponent(DEFAULT_HTTP_VAL),
-  //   });
-  //   // We send a request to initialize and when the first request is in flight
-  //   // we send another request
-  //   let second = worker.client("https://foo.web.val.run");
-
-  //   expect((await first).statusCode).toEqual(200);
-  //   expect(await first.text()).toEqual("vt-done");
-  //   expect(await second.text()).toEqual('{"ok":true}');
-  //   console.log("double request got val: ", performance.now() - t0);
-  //   worker.terminate();
-  // });
 
   it("can implement val town with http.request", async () => {
     const worker = await newDenoHTTPWorker(vtScript, { printOutput: true });
 
     const t0 = performance.now();
-    await new Promise((resolve, reject) => {
-      const req = worker.request(
-        "http://vt",
-        {
-          headers: {
-            "Content-Type": "application/json",
-          },
-          method: "POST",
-        },
-        (resp) => {
-          const body: any[] = [];
-          resp.on("data", (chunk) => {
-            body.push(chunk);
-          });
-          resp.on("end", () => {
-            resolve(Buffer.concat(body).toString());
-          });
-        }
-      );
-      req.on("error", reject);
-      req.write(`data:text/tsx,${encodeURIComponent(DEFAULT_HTTP_VAL)}`);
-      req.end();
+    await worker.request({
+      url: "http://vt/",
+      method: "POST",
+      headers: new Headers({
+        "Content-Type": "application/json",
+      }),
+      body: `data:text/tsx,${encodeURIComponent(DEFAULT_HTTP_VAL)}`,
     });
 
-    const text = await new Promise((resolve) => {
-      const req = worker.request(
-        "https://localhost:1234",
-        { headers: {} },
-        (resp) => {
-          const body: any[] = [];
-          resp.on("data", (chunk) => {
-            body.push(chunk);
-          });
-          resp.on("end", () => {
-            resolve(Buffer.concat(body).toString());
-          });
-        }
-      );
-      req.end();
-    });
+    const text = await worker
+      .request({
+        url: "http://vt/",
+        method: "GET",
+      })
+      .then((resp) => resp.body.text());
+
     expect(text).toEqual('{"ok":true}');
     console.log("Double request http2 val:", performance.now() - t0);
     // await initReq;
-    worker.terminate();
+    await worker.terminate();
   });
+
   // it("val town import header", async () => {
-  //   let worker = await newDenoHTTPWorker(vtHeaderScript, { printOutput: true });
+  //   const worker = await newDenoHTTPWorker(vtHeaderScript, { printOutput: true });
 
   //   const t0 = performance.now();
-  //   let text = await new Promise((resolve) => {
-  //     let req = worker.request(
-  //       "https://localhost:1234",
-  //       {
-  //         headers: {
-  //           "X-VT-Import": `data:text/tsx,${encodeURIComponent(
-  //             DEFAULT_HTTP_VAL
-  //           )}`,
-  //         },
-  //       },
-  //       (resp) => {
-  //         const body: any[] = [];
-  //         resp.on("data", (chunk) => {
-  //           body.push(chunk);
-  //         });
-  //         resp.on("end", () => {
-  //           resolve(Buffer.concat(body).toString());
-  //         });
-  //       }
-  //     );
-  //     req.end();
-  //   });
+  //   const text = await worker.request({
+  //     url: "https://localhost:1234",
+  //     path: "/",
+  //     headers: {
+  //       "X-VT-Import": `data:text/tsx,${encodeURIComponent(
+  //         DEFAULT_HTTP_VAL
+  //       )}`,
+  //     },
+  //   }).then(resp => resp.body.text())
+
   //   expect(text).toEqual('{"ok":true}');
   //   console.log("single request:", performance.now() - t0);
   //   // await initReq;
