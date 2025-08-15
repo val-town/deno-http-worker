@@ -31,6 +31,6 @@ worker.terminate();
 
 ## Internals
 
-Deno-http-worker connects to the Deno process over a Unix socket to make requests.  As a result, the worker does not provide an address or url, but instead returns `undici.ResponseData` that uses `undici.Pool.request` under the hood, but modifies the request attributes to work over the socket.
+Deno-http-worker connects to the Deno process over a Unix socket via undici to make requests.  As a result, the worker does not provide an address or url, but instead returns `undici.ResponseData` that uses `undici.Pool.request` under the hood, but modifies the request attributes to work over the socket, and we expose parts of [request and response interface](./src/types.ts).
 
 If you need more advanced usage here, or run into bugs, please open an issue.
