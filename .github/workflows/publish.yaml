@@ -3,7 +3,7 @@ name: Publish package
 on:
   push:
     # branches:
-      # - main
+    #   - main
   workflow_dispatch:
 
 jobs:
@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+      - name: Install mise
+        uses: jdx/mise-action@v2
       - run: npm ci
       - run: npm run build
       - name: Publish package
