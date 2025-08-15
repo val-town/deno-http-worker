@@ -251,7 +251,7 @@ export const newDenoHTTPWorker = async (
       }
       worker = new denoHTTPWorker(socketFile, process, stdout, stderr);
       running = true;
-      (worker as denoHTTPWorker).warmRequest();
+      await (worker as denoHTTPWorker).warmRequest();
 
       return worker;
     })()
