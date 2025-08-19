@@ -321,7 +321,6 @@ class denoHTTPWorker implements DenoHTTPWorker {
     await this.#pool.close(); // Make sure we're not writing to the pool anymore
     this.#terminated = true;
     if (this.#process && this.#process.exitCode === null) {
-      console.log(forceKill.toString())
       forceKill(this.#process.pid!);
     }
 
@@ -337,7 +336,6 @@ class denoHTTPWorker implements DenoHTTPWorker {
   }
 
   async shutdown() {
-    console.log("Shutting down Deno worker...");
     this.#process.kill("SIGINT");
     await new Promise<void>((res) => {
       this.#process.on("exit", res);
