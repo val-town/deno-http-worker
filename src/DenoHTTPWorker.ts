@@ -318,14 +318,13 @@ class denoHTTPWorker implements DenoHTTPWorker {
       return;
     }
 
-    await this.#pool.close(); // Make sure we're not writing to the pool anymore
     this.#terminated = true;
     if (this.#process && this.#process.exitCode === null) {
       forceKill(this.#process.pid!);
     }
 
-    await fs.rm(this.#socketFile).catch(() => { });
 
+    fs.rm(this.#socketFile).catch(() => { });
     for (const onexit of this.#onexitListeners) {
       onexit(code ?? 1, signal ?? "");
     }
