@@ -17,7 +17,7 @@ const DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH = resolve(
   "../deno-bootstrap/index.ts"
 );
 
-type OnExitListener = (exitCode: number, signal: string) => void;
+type OnExitListener = (exitCode: number, signal: string) => void | Promise<void>;
 
 export class EarlyExitDenoHTTPWorkerError extends Error {
   constructor(
@@ -321,14 +321,15 @@ class denoHTTPWorker implements DenoHTTPWorker {
     await this.#pool.close(); // Make sure we're not writing to the pool anymore
     this.#terminated = true;
     if (this.#process && this.#process.exitCode === null) {
+      console.log(forceKill.toString())
       forceKill(this.#process.pid!);
     }
 
     await fs.rm(this.#socketFile).catch(() => { });
 
-    for (const onexit of this.#onexitListeners) {
-      onexit(code ?? 1, signal ?? "");
-    }
+    await Promise.all(
+      this.#onexitListeners.map((listener) => listener(code ?? 1, signal ?? ""))
+    );
   }
 
   async terminate() {
