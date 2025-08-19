@@ -220,7 +220,7 @@ export const newDenoHTTPWorker = async (
           );
           await fs.rm(socketFile).catch(() => { });
         } else {
-          await (worker as denoHTTPWorker)._terminate(code, signal);
+          // await (worker as denoHTTPWorker)._terminate(code, signal);
         }
       });
       options.onSpawn && options.onSpawn(process);
@@ -337,9 +337,6 @@ class denoHTTPWorker implements DenoHTTPWorker {
 
   async shutdown() {
     this.#process.kill("SIGINT");
-    await new Promise<void>((res) => {
-      this.#process.on("exit", res);
-    });
   }
 
   async request(options: RequestOptions): Promise<ResponseData> {
