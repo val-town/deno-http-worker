@@ -17,7 +17,7 @@ const DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH = resolve(
   "../deno-bootstrap/index.ts"
 );
 
-type OnExitListener = (exitCode: number, signal: string) => void | Promise<void>;
+type OnExitListener = (exitCode: number, signal: string) => void;
 
 export class EarlyExitDenoHTTPWorkerError extends Error {
   constructor(
@@ -220,7 +220,7 @@ export const newDenoHTTPWorker = async (
           );
           await fs.rm(socketFile).catch(() => { });
         } else {
-          // await (worker as denoHTTPWorker)._terminate(code, signal);
+          // the worker has its own exit handlers
         }
       });
       options.onSpawn && options.onSpawn(process);
@@ -297,6 +297,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
   #stdout: Readable;
   #terminated = false;
   #pool: undici.Pool;
+  #onExitPromise: Promise<void>;
 
   constructor(
     socketFile: string,
@@ -311,32 +312,37 @@ class denoHTTPWorker implements DenoHTTPWorker {
     this.#stdout = stdout;
 
     this.#pool = new undici.Pool("http://deno", { socketPath: socketFile })
+
+    this.#onExitPromise = new Promise<void>((res) => {
+      this.#process.on("exit", async (code, signal) => {
+        res();
+
+        for (const listener of this.#onexitListeners) {
+          listener(code ?? 1, signal ?? "");
+        }
+
+        await fs.rm(this.#socketFile).catch(() => { })
+      })
+    })
   }
 
-  async _terminate(code?: number, signal?: string) {
+  async terminate() {
     if (this.#terminated) {
       return;
     }
 
-    // await this.#pool.close(); // Make sure we're not writing to the pool anymore
     this.#terminated = true;
     if (this.#process && this.#process.exitCode === null) {
       forceKill(this.#process.pid!);
     }
+    await this.#pool.close(); // Make sure we're not writing to the pool anymore
 
-    // await fs.rm(this.#socketFile).catch(() => { });
-
-    await Promise.all(
-      this.#onexitListeners.map((listener) => listener(code ?? 1, signal ?? ""))
-    );
-  }
-
-  async terminate() {
-    return await this._terminate();
+    await this.#onExitPromise;
   }
 
   async shutdown() {
     this.#process.kill("SIGINT");
+    await this.#onExitPromise;
   }
 
   async request(options: RequestOptions): Promise<ResponseData> {
