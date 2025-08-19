@@ -220,7 +220,7 @@ export const newDenoHTTPWorker = async (
           );
           await fs.rm(socketFile).catch(() => { });
         } else {
-          await (worker as denoHTTPWorker)._terminate(code, signal);
+          // If it's already running it has its own exit handler
         }
       });
       options.onSpawn && options.onSpawn(process);
@@ -296,6 +296,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
   #stderr: Readable;
   #stdout: Readable;
   #terminated = false;
+  #exitPromise?: Promise<void>;
   #pool: undici.Pool;
 
   constructor(
@@ -311,9 +312,23 @@ class denoHTTPWorker implements DenoHTTPWorker {
     this.#stdout = stdout;
 
     this.#pool = new undici.Pool("http://deno", { socketPath: socketFile })
+
+    this.#process.on("exit", async (code, signal) => {
+      await Promise.all(
+        this.#onexitListeners
+          .map((listener) => listener(code ?? 1, signal ?? ""))
+      );
+
+      await fs.rm(this.#socketFile).catch(() => { });
+    });
+    this.#exitPromise = new Promise<void>((resolve) => {
+      this.#process.on("exit", () => {
+        resolve();
+      });
+    });
   }
 
-  async _terminate(code?: number, signal?: string) {
+  async _terminate() {
     if (this.#terminated) {
       return;
     }
@@ -324,11 +339,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
       forceKill(this.#process.pid!);
     }
 
-    await fs.rm(this.#socketFile).catch(() => { });
-
-    await Promise.all(
-      this.#onexitListeners.map((listener) => listener(code ?? 1, signal ?? ""))
-    );
+    await this.#exitPromise;
   }
 
   async terminate() {
@@ -337,9 +348,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
 
   async shutdown() {
     this.#process.kill("SIGINT");
-    await new Promise<void>((res) => {
-      this.#process.on("exit", res);
-    });
+    await this.#exitPromise;
   }
 
   async request(options: RequestOptions): Promise<ResponseData> {
