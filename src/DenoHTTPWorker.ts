@@ -323,11 +323,11 @@ class denoHTTPWorker implements DenoHTTPWorker {
       forceKill(this.#process.pid!);
     }
 
-    await Promise.all(
-      this.#onexitListeners.map(onexit => onexit(code ?? 1, signal ?? ""))
-    );
 
-    await fs.rm(this.#socketFile).catch(() => { });
+    fs.rm(this.#socketFile).catch(() => { });
+    for (const onexit of this.#onexitListeners) {
+      onexit(code ?? 1, signal ?? "");
+    }
   }
 
   async terminate() {
