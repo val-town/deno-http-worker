@@ -322,6 +322,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
         }
 
         await fs.rm(this.#socketFile).catch(() => { })
+        await this.#pool.close(); // Make sure we're not writing to the pool anymore
       })
     })
   }
@@ -335,7 +336,6 @@ class denoHTTPWorker implements DenoHTTPWorker {
     if (this.#process && this.#process.exitCode === null) {
       forceKill(this.#process.pid!);
     }
-    await this.#pool.close(); // Make sure we're not writing to the pool anymore
 
     await this.#onExitPromise;
   }
