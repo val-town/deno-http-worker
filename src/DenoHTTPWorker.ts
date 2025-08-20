@@ -348,6 +348,18 @@ class denoHTTPWorker implements DenoHTTPWorker {
     });
   }
 
+  /**
+   * Opens a WebSocket connection to the given URL in the worker process.
+   * 
+   * Note that we internally modify request headers in the proxying path, and in
+   * order to achieve this for WebSockets we patch the `Deno.upgradeWebSocket`
+   * method to use the original unmodified request, since Deno doesn't let us
+   * use a cloned Request object.
+   * 
+   * @param url The URL to connect to.
+   * @param headers Headers to include in the connection request.
+   * @returns A promise that resolves to the WebSocket instance.
+   */
   async websocket(url: string, headers: Headers = new Headers()): Promise<WebSocket> {
     console.log("Opening WebSocket connection to:", url);
     headers = this.#processHeaders(headers, url);
