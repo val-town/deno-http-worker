@@ -1,3 +1,9 @@
+declare global {
+  interface Request {
+    _original: Request;
+  }
+}
+
 const socketFile = Deno.args[0];
 const scriptType = Deno.args[1];
 const script = Deno.args[2];
@@ -41,6 +47,7 @@ const server = Deno.serve(
     // Deno Request headers are immutable so we must make a new Request in order
     // to delete our headers.
     const req = new Request(url.toString(), originalReq);
+    req._original = originalReq;
 
     // Restore host and connection headers.
     req.headers.delete("host");
@@ -67,7 +74,7 @@ const server = Deno.serve(
     Object.defineProperty(Deno, "upgradeWebSocket", {
       // Since they only have one entrypoint it should be ok to just totally override this
       value: () => {
-        return originalUpgrade(originalReq);
+        return originalUpgrade(req._original);
       },
     })
 
