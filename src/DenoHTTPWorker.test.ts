@@ -456,4 +456,58 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
 
     await worker.terminate();
   });
+
+  it("can upgrade many websockets at the same time, and identify them uniquely", async () => {
+    const webSocketScriptStr = fs.readFileSync(echoWebsocketFile, { encoding: "utf-8" });
+    const worker = await newDenoHTTPWorker(webSocketScriptStr, { printOutput: true });
+
+    const ws1 = await worker.websocket("ws://localhost/echo");
+    const ws2 = await worker.websocket("ws://localhost/echo");
+    const ws3 = await worker.websocket("ws://localhost/echo");
+
+    await new Promise<void>((res) => {
+      ws1.addEventListener("open", () => res());
+    });
+    await new Promise<void>((res) => {
+      ws2.addEventListener("open", () => res());
+    });
+    await new Promise<void>((res) => {
+      ws3.addEventListener("open", () => res());
+    });
+
+    const ws1Messages: string[] = [];
+    const ws2Messages: string[] = [];
+    const ws3Messages: string[] = [];
+
+    ws1.addEventListener("message", (event) => {
+      ws1Messages.push(event.data);
+    });
+    ws2.addEventListener("message", (event) => {
+      ws2Messages.push(event.data);
+    });
+    ws3.addEventListener("message", (event) => {
+      ws3Messages.push(event.data);
+    });
+
+    // Now we send 300 messages to each and make sure that they receive the correct ones
+    for (let i = 0; i < 300; i++) {
+      ws1.send(`ws1-message-${i}`);
+      ws2.send(`ws2-message-${i}`);
+      ws3.send(`ws3-message-${i}`);
+    }
+
+    await new Promise((res) => setTimeout(res, 50));
+
+    expect(ws1Messages).toEqual(
+      Array.from({ length: 300 }, (_, i) => `ws1-message-${i}`)
+    );
+    expect(ws2Messages).toEqual(
+      Array.from({ length: 300 }, (_, i) => `ws2-message-${i}`)
+    );
+    expect(ws3Messages).toEqual(
+      Array.from({ length: 300 }, (_, i) => `ws3-message-${i}`)
+    );
+
+    await worker.terminate();
+  });
 });
