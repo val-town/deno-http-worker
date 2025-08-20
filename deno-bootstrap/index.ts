@@ -1,6 +1,6 @@
 declare global {
   interface Request {
-    _original: Request;
+    [originalRequestProp]: Request;
   }
 }
 
@@ -27,11 +27,12 @@ const onError =
     console.error(error);
     return new Response("Internal Server Error", { status: 500 });
   });
-const onListen = mod.default.onListen ?? ((_localAddr: Deno.NetAddr) => {});
+const onListen = mod.default.onListen ?? ((_localAddr: Deno.NetAddr) => { });
 
 const originalRequestProp = Symbol("originalRequest");
 
-// We need to override Deno.upgradeWebSocket to use the original request object.
+// We need to override Deno.upgradeWebSocket to use the original request object
+// since Deno doesn't let us use copied request objects.
 const originalUpgrade = Deno.upgradeWebSocket;
 Object.defineProperty(Deno, "upgradeWebSocket", {
   value: (req: Request) => {
@@ -59,7 +60,9 @@ const server = Deno.serve(
     // Deno Request headers are immutable so we must make a new Request in order
     // to delete our headers.
     const req = new Request(url.toString(), originalReq);
-    req._original = originalReq;
+
+    // Add the original request so that we can use it during Deno.upgradeWebSocket
+    req[originalRequestProp] = originalReq;
 
     // Restore host and connection headers.
     req.headers.delete("host");
@@ -74,9 +77,6 @@ const server = Deno.serve(
         req.headers.get("X-Deno-Worker-Connection")!
       );
     }
-
-    // Add the original request so that we can use it during Deno.upgradeWebSocket
-    req[originalRequestProp] = originalReq;
 
     req.headers.delete("X-Deno-Worker-URL");
     req.headers.delete("X-Deno-Worker-Host");
