@@ -28,8 +28,8 @@ const server = Deno.serve(
     onListen: onListen,
     onError: onError,
   },
-  (req: Request) => {
-    const headerUrl = req.headers.get("X-Deno-Worker-URL");
+  (originalReq: Request) => {
+    const headerUrl = originalReq.headers.get("X-Deno-Worker-URL");
     if (!headerUrl) {
       // This is just for the warming request, shouldn't be seen by clients.
       return Response.json({ warming: true }, { status: 200 });
@@ -37,29 +37,40 @@ const server = Deno.serve(
 
     // We can't modify the headers of a WebSocket request and reconstructing the
     // request breaks it
-    if (req.headers.get("upgrade") !== "websocket") {
-      const url = new URL(headerUrl);
-      // Deno Request headers are immutable so we must make a new Request in order
-      // to delete our headers.
-      req = new Request(url.toString(), req);
+    const url = new URL(headerUrl);
+    // Deno Request headers are immutable so we must make a new Request in order
+    // to delete our headers.
+    const req = new Request(url.toString(), originalReq);
 
-      // Restore host and connection headers.
-      req.headers.delete("host");
-      req.headers.delete("connection");
-      if (req.headers.has("X-Deno-Worker-Host")) {
-        req.headers.set("host", req.headers.get("X-Deno-Worker-Host")!);
-      }
-      if (req.headers.has("X-Deno-Worker-Connection")) {
-        req.headers.set(
-          "connection",
-          req.headers.get("X-Deno-Worker-Connection")!,
-        );
-      }
-
-      req.headers.delete("X-Deno-Worker-URL");
-      req.headers.delete("X-Deno-Worker-Host");
-      req.headers.delete("X-Deno-Worker-Connection");
+    // Restore host and connection headers.
+    req.headers.delete("host");
+    req.headers.delete("connection");
+    if (req.headers.has("X-Deno-Worker-Host")) {
+      req.headers.set("host", req.headers.get("X-Deno-Worker-Host")!);
     }
+    if (req.headers.has("X-Deno-Worker-Connection")) {
+      req.headers.set(
+        "connection",
+        req.headers.get("X-Deno-Worker-Connection")!,
+      );
+    }
+
+    req.headers.delete("X-Deno-Worker-URL");
+    req.headers.delete("X-Deno-Worker-Host");
+    req.headers.delete("X-Deno-Worker-Connection");
+
+    // Deno.upgradeWebSocket only will work with the original request object,
+    // copied objects do not work. We want to give the user headers as similar
+    // to the original ones as possible, but for the actual upgrade handshake we
+    // will always want to use the original request.
+    const originalUpgrade = Deno.upgradeWebSocket
+    Object.defineProperty(Deno, "upgradeWebSocket", {
+      // Since they only have one entrypoint it should be ok to just totally override this
+      value: () => {
+        console.log("Upgrading WebSocket");
+        return originalUpgrade(originalReq);
+      },
+    })
 
     return mod.default.fetch(req);
   },
