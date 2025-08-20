@@ -421,7 +421,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     }
   });
 
-  it.only("can upgrade websocket", async () => {
+  it("can upgrade websocket", async () => {
     const webSocketScriptStr = fs.readFileSync(echoWebsocketFile, { encoding: "utf-8" });
     const worker = await newDenoHTTPWorker(webSocketScriptStr, { printOutput: true });
 
