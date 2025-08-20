@@ -25,9 +25,9 @@ const onListen = mod.default.onListen ?? ((_localAddr: Deno.NetAddr) => {});
 
 const originalRequestProp = Symbol("originalRequest");
 
+// We need to override Deno.upgradeWebSocket to use the original request object.
 const originalUpgrade = Deno.upgradeWebSocket;
 Object.defineProperty(Deno, "upgradeWebSocket", {
-  // Since they only have one entrypoint it should be ok to just totally override this
   value: (req: Request) => {
     return originalUpgrade(req[originalRequestProp]);
   },
