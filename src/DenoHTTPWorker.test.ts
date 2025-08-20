@@ -194,8 +194,8 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     await worker.terminate();
   });
 
-  it("unhandled rejection", { timeout: 20_000 }, async () => {
-    // onError **is** called for unhandled rejections that happen outside the request
+  it("unhandled rejection", async () => {
+    // the process **does** die for unhandled rejections
     const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
