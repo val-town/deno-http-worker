@@ -1,6 +1,9 @@
 export default {
-  fetch: (req) => {
+  fetch: async (req) => {
     if (req.headers.get("upgrade") === "websocket") {
+      // For testing: to make sure that it doesn't matter exactly when we do the upgrade
+      await new Promise((resolve) => setTimeout(resolve, Math.random()));
+
       const { socket, response } = Deno.upgradeWebSocket(req);
 
       socket.addEventListener("open", () => {
