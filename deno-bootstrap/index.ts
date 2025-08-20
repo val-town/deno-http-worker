@@ -67,7 +67,6 @@ const server = Deno.serve(
     Object.defineProperty(Deno, "upgradeWebSocket", {
       // Since they only have one entrypoint it should be ok to just totally override this
       value: () => {
-        console.log("Upgrading WebSocket");
         return originalUpgrade(originalReq);
       },
     })
