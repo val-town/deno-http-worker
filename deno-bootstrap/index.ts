@@ -34,27 +34,33 @@ const server = Deno.serve(
       // This is just for the warming request, shouldn't be seen by clients.
       return Response.json({ warming: true }, { status: 200 });
     }
-    const url = new URL(headerUrl);
-    // Deno Request headers are immutable so we must make a new Request in order
-    // to delete our headers.
-    req = new Request(url.toString(), req);
 
-    // Restore host and connection headers.
-    req.headers.delete("host");
-    req.headers.delete("connection");
-    if (req.headers.has("X-Deno-Worker-Host")) {
-      req.headers.set("host", req.headers.get("X-Deno-Worker-Host")!);
-    }
-    if (req.headers.has("X-Deno-Worker-Connection")) {
-      req.headers.set(
-        "connection",
-        req.headers.get("X-Deno-Worker-Connection")!,
-      );
+    // We can't modify the headers of a WebSocket request and reconstructing the
+    // request breaks it
+    if (req.headers.get("upgrade") !== "websocket") {
+      const url = new URL(headerUrl);
+      // Deno Request headers are immutable so we must make a new Request in order
+      // to delete our headers.
+      req = new Request(url.toString(), req);
+
+      // Restore host and connection headers.
+      req.headers.delete("host");
+      req.headers.delete("connection");
+      if (req.headers.has("X-Deno-Worker-Host")) {
+        req.headers.set("host", req.headers.get("X-Deno-Worker-Host")!);
+      }
+      if (req.headers.has("X-Deno-Worker-Connection")) {
+        req.headers.set(
+          "connection",
+          req.headers.get("X-Deno-Worker-Connection")!,
+        );
+      }
+
+      req.headers.delete("X-Deno-Worker-URL");
+      req.headers.delete("X-Deno-Worker-Host");
+      req.headers.delete("X-Deno-Worker-Connection");
     }
 
-    req.headers.delete("X-Deno-Worker-URL");
-    req.headers.delete("X-Deno-Worker-Host");
-    req.headers.delete("X-Deno-Worker-Connection");
     return mod.default.fetch(req);
   },
 );

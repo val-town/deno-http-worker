@@ -38,6 +38,7 @@ test("EarlyExitDenoHTTPWorkerError", () => {
 describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   const echoFile = path.resolve(__dirname, "./test/echo-request.ts");
   const echoScript = fs.readFileSync(echoFile, { encoding: "utf-8" });
+  const echoWebsocketFile = path.resolve(__dirname, "./test/echo-websocket.ts");
   const vtFile = path.resolve(__dirname, "./test/val-town.ts");
   const vtScript = fs.readFileSync(vtFile, { encoding: "utf-8" });
 
@@ -418,5 +419,41 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
         });
       });
     }
+  });
+
+  it.only("can upgrade websocket", async () => {
+    const webSocketScriptStr = fs.readFileSync(echoWebsocketFile, { encoding: "utf-8" });
+    const worker = await newDenoHTTPWorker(webSocketScriptStr, { printOutput: true });
+
+    const messages: string[] = [];
+    const ws = await worker.websocket("ws://localhost/echo");
+    const event = await new Promise<Event>(res => {
+      ws.addEventListener("open", (event) => {
+        console.log("WebSocket connection opened");
+        ws.send("message1");
+        res(event);
+      });
+      ws.addEventListener("message", (event) => {
+        messages.push(event.data);
+      });
+      ws.addEventListener("close", (event) => {
+        expect(event.code).toEqual(4001);
+        expect(event.reason).toEqual("bye");
+        res(event);
+      });
+    });
+    expect(event.type).toEqual("open");
+
+    ws.send("message2");
+    ws.send("message3");
+
+    await new Promise((res) => setTimeout(res, 50));
+
+    expect(messages).toEqual(["message1", "message2", "message3"]);
+
+    ws.close(4001, "bye");
+    await new Promise((res) => ws.addEventListener("close", res));
+
+    await worker.terminate();
   });
 });

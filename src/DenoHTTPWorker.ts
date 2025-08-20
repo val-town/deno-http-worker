@@ -6,7 +6,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 
 import { fileURLToPath } from "node:url";
-import undici from "undici";
+import undici, { WebSocket } from "undici";
 import type { ResponseData, RequestOptions } from "./types.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -279,6 +279,12 @@ export interface DenoHTTPWorker {
    */
   request: (ops: RequestOptions) => Promise<ResponseData>;
 
+  /**
+   * Opens a WebSocket connection to the given URL. The URL should be a valid
+   * WebSocket URL that the Deno worker can handle.
+   */
+  websocket(url: string, headers?: Headers): Promise<WebSocket>;
+
   get stdout(): Readable;
 
   get stderr(): Readable;
@@ -342,13 +348,38 @@ class denoHTTPWorker implements DenoHTTPWorker {
     });
   }
 
+  async websocket(url: string, headers: Headers = new Headers()): Promise<WebSocket> {
+    console.log("Opening WebSocket connection to:", url);
+    headers = this.#processHeaders(headers, url);
+    headers.set("x-deno-worker-connection", "upgrade"); // Required for websockets
+
+    return new WebSocket(url, {
+      dispatcher: this.#pool,
+      headers
+    });
+  }
+
   async request(options: RequestOptions): Promise<ResponseData> {
-    // UndiciHeaders can be an array or an object, so we normalize so we can
-    // manipulate the header options.
+    const headers = this.#processHeaders(options.headers || new Headers(), options.url);
 
-    const headers = options.headers || new Headers();
+    return await this.#pool.request({
+      ...options,
+      origin: "http://deno",
+      path: "/",
+      query: {},
+      headers,
+    })
+      .then(resp => ({
+        statusCode: resp.statusCode,
+        headers: resp.headers,
+        body: resp.body,
+        trailers: resp.trailers,
+        context: resp.context || {},
+      }));
+  }
 
-    headers.set("x-deno-worker-url", options.url);
+  #processHeaders(headers: Headers, url: string): Headers {
+    headers.set("x-deno-worker-url", url);
 
     // To prevent the user from setting these headers, we either update them to
     // the real host / connection, or clear them
@@ -365,20 +396,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
       headers.set("x-deno-worker-connection", connection);
     }
 
-    return await this.#pool.request({
-      ...options,
-      origin: "http://deno",
-      path: "/",
-      query: {},
-      headers,
-    })
-      .then(resp => ({
-        statusCode: resp.statusCode,
-        headers: resp.headers,
-        body: resp.body,
-        trailers: resp.trailers,
-        context: resp.context || {},
-      }));
+    return headers;
   }
 
   // We send this request to Deno so that we get a live connection in the
