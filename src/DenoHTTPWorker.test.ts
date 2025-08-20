@@ -194,6 +194,32 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     await worker.terminate();
   });
 
+  it("unhandled rejection", async () => {
+    // the process **does** die for unhandled rejections
+    const worker = await newDenoHTTPWorker(
+      `
+        export default { async fetch (req: Request): Promise<Response> {
+          Promise.reject(new Error("uncaught!"))
+          return Response.json(null)
+        }, onError (error: Error): Response {
+          return Response.json({ error: error.message }, { status: 500 })
+        }}
+      `,
+      { printOutput: false }
+    );
+    const codePromise = new Promise((res) => {
+      worker.addEventListener("exit", (code) => res(code));
+    });
+
+    jsonRequest(worker, "https://localhost/hello?isee=you", {
+      headers: { accept: "application/json" },
+    }).catch(() => { });
+
+    expect(await codePromise).toEqual(1);
+
+    await worker.terminate();
+  });
+
   it("shutdown gracefully", async () => {
     const worker = await newDenoHTTPWorker(
       `
