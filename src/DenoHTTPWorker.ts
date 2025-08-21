@@ -284,9 +284,12 @@ export interface DenoHTTPWorker {
   request: (ops: RequestOptions) => Promise<ResponseData>;
 
   /**
-   * Opens a WebSocket connection to the given URL. This uses undici.Websocket
-   * and the Deno handler is expected to handle the request with
-   * Deno.upgradeWebSocket.
+   * Opens a WebSocket connection to the given URL in the worker process.
+   *
+   * Note that we internally modify request headers in the proxying path, and in
+   * order to achieve this for WebSockets we patch the `Deno.upgradeWebSocket`
+   * method to use the original unmodified request, since Deno doesn't let us
+   * use a cloned Request object.
    */
   websocket(url: string, headers?: Headers): Promise<WebSocket>;
 
@@ -351,18 +354,6 @@ class denoHTTPWorker implements DenoHTTPWorker {
     });
   }
 
-  /**
-   * Opens a WebSocket connection to the given URL in the worker process.
-   *
-   * Note that we internally modify request headers in the proxying path, and in
-   * order to achieve this for WebSockets we patch the `Deno.upgradeWebSocket`
-   * method to use the original unmodified request, since Deno doesn't let us
-   * use a cloned Request object.
-   *
-   * @param url The URL to connect to.
-   * @param headers Headers to include in the connection request.
-   * @returns A promise that resolves to the WebSocket instance.
-   */
   async websocket(
     url: string,
     headers: Headers = new Headers()
