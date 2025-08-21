@@ -8,7 +8,7 @@ deno-http-worker lets you securely spawn Deno http servers.
 ## Usage
 
 ```ts
-import { newDenoHTTPWorker } from "deno-http-worker";
+import { newDenoHTTPWorker } from "@valtown/deno-http-worker";
 
 let worker = await newDenoHTTPWorker(
     `export default {
