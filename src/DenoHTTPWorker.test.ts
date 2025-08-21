@@ -373,16 +373,16 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
         const worker = new Worker(source, {
           eval: true,
         });
-        worker.stderr.on("data", (_data) => {
+        worker.stderr.on("data", () => {
           // console.error(data.toString());
         });
-        worker.stdout.on("data", (_data) => {
+        worker.stdout.on("data", () => {
           // console.error(data.toString());
         });
         worker.on("error", (e) => {
           reject(e);
         });
-        worker.on("exit", (_code) => {
+        worker.on("exit", () => {
           resolve();
         });
       });

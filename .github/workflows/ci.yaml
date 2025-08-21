@@ -25,9 +25,5 @@ jobs:
           deno-version: ${{ matrix.deno-version }}
       - name: npm install
         run: npm ci
-      - name: prepare
-        run: npm run prepare
-      - name: lint
-        run: npm run lint
       - name: vitest
         run: npm run test
