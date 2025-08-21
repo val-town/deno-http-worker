@@ -284,8 +284,9 @@ export interface DenoHTTPWorker {
   request: (ops: RequestOptions) => Promise<ResponseData>;
 
   /**
-   * Opens a WebSocket connection to the given URL. The URL should be a valid
-   * WebSocket URL that the Deno worker can handle.
+   * Opens a WebSocket connection to the given URL. This uses undici.Websocket
+   * and the Deno handler is expected to handle the request with
+   * Deno.upgradeWebSocket.
    */
   websocket(url: string, headers?: Headers): Promise<WebSocket>;
 
