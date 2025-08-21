@@ -5,10 +5,11 @@
     "indentStyle": "space"
   },
   "files": {
-    "includes": ["**", "!**/dist"]
+    "includes": ["**", "!**/dist", "!**/deno-bootstrap", "!**/src/test"]
   },
   "assist": { "actions": { "source": { "organizeImports": "off" } } },
   "linter": {
+    "includes": ["**", "!**/dist", "!**/deno-bootstrap", "!**/src/test"],
     "enabled": true,
     "rules": {
       "recommended": true,
