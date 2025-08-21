@@ -9,7 +9,7 @@ jobs:
       matrix:
         os: [ubuntu-latest]
         node-version: [22.x, 24.x]
-        deno-version: [1.40.x]
+        deno-version: [2.3.x]
     runs-on: ${{ matrix.os }}
     env:
       CI: true
