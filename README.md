@@ -1,6 +1,6 @@
 # deno-http-worker
 
-[![NPM version](https://img.shields.io/npm/v/deno-http-worker.svg?style=flat)](https://npmjs.org/package/deno-http-worker)
+[![NPM version](https://img.shields.io/npm/v/deno-http-worker.svg?style=flat)](https://npmjs.org/package/@valtown/deno-http-worker)
 
 Similarly to [deno-vm](https://github.com/casual-simulation/node-deno-vm),
 deno-http-worker lets you securely spawn Deno http servers.
