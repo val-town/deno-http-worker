@@ -84,13 +84,8 @@ const server = Deno.serve(
   },
 );
 
-addEventListener("error", (e) => {
+globalThis.addEventListener("error", (e) => {
   console.error(e.error);
-  e.preventDefault();
-});
-
-addEventListener("unhandledrejection", (e) => {
-  console.error(e.reason);
   e.preventDefault();
 });
 

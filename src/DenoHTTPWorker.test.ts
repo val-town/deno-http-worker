@@ -195,8 +195,8 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     await worker.terminate();
   });
 
-  it("unhandled rejection", { timeout: 20_000 }, async () => {
-    // onError is not called for unhandled rejections that happen outside the request
+  it("unhandled rejection", async () => {
+    // the process **does** die for unhandled rejections
     const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
@@ -208,18 +208,15 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       `,
       { printOutput: false }
     );
+    const codePromise = new Promise((res) => {
+      worker.addEventListener("exit", (code) => res(code));
+    });
+
     jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
     }).catch(() => {});
 
-    for (;;) {
-      const stderr = worker.stderr.read();
-      if (stderr) {
-        expect(stderr.toString()).toContain("Error: uncaught!");
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    expect(await codePromise).toEqual(1);
     await worker.terminate();
   });
 
