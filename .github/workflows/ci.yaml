@@ -11,6 +11,8 @@ jobs:
         node-version: [22.x, 24.x]
         deno-version: [1.40.x]
     runs-on: ${{ matrix.os }}
+    env:
+      CI: true
     steps:
       - uses: actions/checkout@v5
       - name: Use Node.js ${{ matrix.node-version }}
@@ -23,13 +25,9 @@ jobs:
           deno-version: ${{ matrix.deno-version }}
       - name: npm install
         run: npm ci
-        env:
-          CI: true
       - name: prepare
         run: npm run prepare
-        env:
-          CI: true
+      - name: lint
+        run: npm run lint
       - name: vitest
         run: npm run test
-        env:
-          CI: true

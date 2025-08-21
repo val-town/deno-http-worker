@@ -23,5 +23,5 @@ export default {
     }
 
     return new Response("Not a websocket request", { status: 400 });
-  }
+  },
 } satisfies Deno.ServeDefaultExport;

@@ -1,17 +1,10 @@
-declare global {
-  interface Request {
-    [originalRequestProp]: Request;
-  }
-}
-
 const socketFile = Deno.args[0];
 const scriptType = Deno.args[1];
 const script = Deno.args[2];
 
-const importURL =
-  scriptType === "import"
-    ? script
-    : `data:text/tsx,${encodeURIComponent(script)}`;
+const importURL = scriptType === "import"
+  ? script
+  : `data:text/tsx,${encodeURIComponent(script)}`;
 
 const mod = await import(importURL);
 if (!mod.default) {
@@ -21,13 +14,12 @@ if (typeof mod.default.fetch !== "function") {
   throw new Error("Default export does not have a fetch function.");
 }
 
-const onError =
-  mod.default.onError ??
+const onError = mod.default.onError ??
   ((error: unknown) => {
     console.error(error);
     return new Response("Internal Server Error", { status: 500 });
   });
-const onListen = mod.default.onListen ?? ((_localAddr: Deno.NetAddr) => { });
+const onListen = mod.default.onListen ?? ((_localAddr: Deno.NetAddr) => {});
 
 const originalRequestProp = Symbol("originalRequest");
 
@@ -36,7 +28,11 @@ const originalRequestProp = Symbol("originalRequest");
 const originalUpgrade = Deno.upgradeWebSocket;
 Object.defineProperty(Deno, "upgradeWebSocket", {
   value: (req: Request) => {
-    return originalUpgrade(req[originalRequestProp]);
+    return originalUpgrade(
+      (req as unknown as { [originalRequestProp]: Request })[
+        originalRequestProp
+      ],
+    );
   },
 });
 
@@ -62,7 +58,9 @@ const server = Deno.serve(
     const req = new Request(url.toString(), originalReq);
 
     // Add the original request so that we can use it during Deno.upgradeWebSocket
-    req[originalRequestProp] = originalReq;
+    (req as unknown as { [originalRequestProp]: Request })[
+      originalRequestProp
+    ] = originalReq;
 
     // Restore host and connection headers.
     req.headers.delete("host");
@@ -74,7 +72,7 @@ const server = Deno.serve(
     if (req.headers.has("X-Deno-Worker-Connection")) {
       req.headers.set(
         "connection",
-        req.headers.get("X-Deno-Worker-Connection")!
+        req.headers.get("X-Deno-Worker-Connection")!,
       );
     }
 
@@ -83,7 +81,7 @@ const server = Deno.serve(
     req.headers.delete("X-Deno-Worker-Connection");
 
     return mod.default.fetch(req);
-  }
+  },
 );
 
 addEventListener("error", (e) => {

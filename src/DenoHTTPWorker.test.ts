@@ -182,9 +182,9 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     );
     jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
-    }).catch(() => { });
+    }).catch(() => {});
 
-    for (; ;) {
+    for (;;) {
       const stderr = worker.stderr.read();
       if (stderr) {
         expect(stderr.toString()).toContain("Error: uncaught!");
@@ -210,9 +210,9 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     );
     jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
-    }).catch(() => { });
+    }).catch(() => {});
 
-    for (; ;) {
+    for (;;) {
       const stderr = worker.stderr.read();
       if (stderr) {
         expect(stderr.toString()).toContain("Error: uncaught!");
@@ -246,11 +246,11 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       });
     });
     const json = await jsonRequest(worker, "https://localhost/hello?isee=you");
-    console.log(json)
+    console.log(json);
     expect(json).toEqual({
       ok: "https://localhost/hello?isee=you",
     });
-    console.log("OKK")
+    console.log("OKK");
     void worker.shutdown();
     await exitPromise;
   });
@@ -422,12 +422,16 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   });
 
   it("can upgrade websocket", async () => {
-    const webSocketScriptStr = fs.readFileSync(echoWebsocketFile, { encoding: "utf-8" });
-    const worker = await newDenoHTTPWorker(webSocketScriptStr, { printOutput: true });
+    const webSocketScriptStr = fs.readFileSync(echoWebsocketFile, {
+      encoding: "utf-8",
+    });
+    const worker = await newDenoHTTPWorker(webSocketScriptStr, {
+      printOutput: true,
+    });
 
     const messages: string[] = [];
     const ws = await worker.websocket("ws://localhost/echo");
-    const event = await new Promise<Event>(res => {
+    const event = await new Promise<Event>((res) => {
       ws.addEventListener("open", (event) => {
         console.log("WebSocket connection opened");
         ws.send("message1");
@@ -458,8 +462,12 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   });
 
   it("can upgrade many websockets at the same time, and identify them uniquely", async () => {
-    const webSocketScriptStr = fs.readFileSync(echoWebsocketFile, { encoding: "utf-8" });
-    const worker = await newDenoHTTPWorker(webSocketScriptStr, { printOutput: true });
+    const webSocketScriptStr = fs.readFileSync(echoWebsocketFile, {
+      encoding: "utf-8",
+    });
+    const worker = await newDenoHTTPWorker(webSocketScriptStr, {
+      printOutput: true,
+    });
 
     const ws1 = await worker.websocket("ws://localhost/echo");
     const ws2 = await worker.websocket("ws://localhost/echo");
@@ -497,5 +505,5 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     );
 
     await worker.terminate();
-  } );
+  });
 });
