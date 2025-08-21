@@ -33,9 +33,9 @@ worker.terminate();
 ## Internals
 
 > [!TIP]
-> This package globally patches Deno.upgradeWebSocket to enable websocket
-> proxying. You can provide your own bootstrap script if different behavior is
-> desired.
+> This package [globally patches](/deno-bootstrap/index.ts#L28)
+> Deno.upgradeWebSocket to enable websocket proxying. You can provide your own
+> bootstrap script if different behavior is desired.
 
 Deno-http-worker connects to the Deno process over a Unix socket via undici to
 make requests. As a result, the worker does not provide an address or url, but
