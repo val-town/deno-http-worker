@@ -344,7 +344,6 @@ class denoHTTPWorker implements DenoHTTPWorker {
   }
 
   async shutdown() {
-    console.log("Shutting down Deno worker...");
     this.#process.kill("SIGINT");
     await new Promise<void>((res) => {
       this.#process.on("exit", res);
@@ -367,7 +366,6 @@ class denoHTTPWorker implements DenoHTTPWorker {
     url: string,
     headers: Headers = new Headers()
   ): Promise<WebSocket> {
-    console.log("Opening WebSocket connection to:", url);
     headers = this.#processHeaders(headers, url);
     headers.set("x-deno-worker-connection", "upgrade"); // Required for websockets
 
