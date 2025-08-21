@@ -363,11 +363,16 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       .filter((line) => line.startsWith("ts\n"))
       .map((line) => line.slice(3));
     for (let source of toTest) {
-      source = source.replaceAll(
-        'import { newDenoHTTPWorker } from "deno-http-worker";',
+      const replacedSource = source.replaceAll(
+        'import { newDenoHTTPWorker } from "@valtown/deno-http-worker";',
         "const { newDenoHTTPWorker } = await import('./dist/index.js');          "
       );
-      source = `(async () => {${source}})()`;
+      if (replacedSource === source) {
+        throw new Error(
+          "No replacement found in readme, do you need to update the replacement string?"
+        );
+      }
+      source = `(async () => {${replacedSource}})()`;
 
       await new Promise<void>((resolve, reject) => {
         const worker = new Worker(source, {
