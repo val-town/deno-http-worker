@@ -10,7 +10,7 @@
     "lint": "biome check && eslint . && npm run lint:deno-bootstrap && npm run lint:deno-test-files",
     "lint:deno-bootstrap": "cd deno-bootstrap && deno lint && deno fmt --check && deno check *.ts",
     "lint:deno-test-files": "cd src/test && deno lint && deno fmt --check && deno check *.ts",
-    "build": "tsc --build",
+    "build": "tsc --build tsconfig.build.json",
     "prepare": "npm run lint && npm run build"
   },
   "files": [
