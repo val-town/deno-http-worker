@@ -30,6 +30,9 @@ jobs:
         with:
           deno-version: 2.5.3
 
+      - name: update npm
+        run: npm update -g npm
+
       - name: Install Dependencies
         run: npm install
 
@@ -39,4 +42,5 @@ jobs:
         with:
           publish: npm publish
         env:
+          NPM_CONFIG_PROVENANCE: true
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
