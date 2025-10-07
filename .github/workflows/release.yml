@@ -20,6 +20,11 @@ jobs:
         with:
           node-version: 22
 
+      - name: Use Deno Version 2.5.3
+        uses: denolib/setup-deno@master
+        with:
+          deno-version: 2.5.3
+
       - name: Install Dependencies
         run: npm install
 
@@ -31,3 +36,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
