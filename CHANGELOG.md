@@ -1,5 +1,11 @@
 # @valtown/deno-http-worker
 
+## 1.1.4
+
+### Patch Changes
+
+- 6764cf6: Don't close the pool (bugfix)
+
 ## 1.1.3
 
 ### Patch Changes
