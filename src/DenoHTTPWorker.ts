@@ -1,5 +1,9 @@
 import path, { resolve } from "node:path";
-import { ChildProcess, spawn, type SpawnOptions } from "node:child_process";
+import {
+  type ChildProcess,
+  spawn,
+  type SpawnOptions,
+} from "node:child_process";
 import type { Readable } from "node:stream";
 import readline from "node:readline";
 import fs from "node:fs/promises";

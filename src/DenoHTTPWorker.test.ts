@@ -3,7 +3,6 @@ import { type DenoHTTPWorker, newDenoHTTPWorker } from "./index.js";
 import fs from "node:fs";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
-import { type SpawnOptions, spawn } from "node:child_process";
 import { EarlyExitDenoHTTPWorkerError } from "./DenoHTTPWorker.js";
 
 // Uncomment this if you want to debug serial test execution
