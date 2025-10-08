@@ -7,6 +7,7 @@ import {
 import type { Readable } from "node:stream";
 import readline from "node:readline";
 import fs from "node:fs/promises";
+import EventTarget, { once } from "node:events";
 import os from "node:os";
 
 import { fileURLToPath } from "node:url";
@@ -21,7 +22,13 @@ const DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH = resolve(
   "../deno-bootstrap/index.ts"
 );
 
-type OnExitListener = (exitCode: number, signal: string) => void;
+/**
+ * The types of events that can be subscribed to in the Deno
+ * worker.
+ */
+type EventMap = {
+  exit: [number, string];
+};
 
 export class EarlyExitDenoHTTPWorkerError extends Error {
   constructor(
@@ -238,7 +245,7 @@ export const newDenoHTTPWorker = async (
   });
 };
 
-export interface DenoHTTPWorker {
+export interface DenoHTTPWorker extends EventTarget<EventMap> {
   /**
    * Terminate the worker. This kills the process with SIGKILL if it is still
    * running, closes the http2 connection, and deletes the socket file.
@@ -270,15 +277,9 @@ export interface DenoHTTPWorker {
   get stdout(): Readable;
 
   get stderr(): Readable;
-
-  /**
-   * Adds the given listener for the "exit" event.
-   */
-  addEventListener(type: "exit", listener: OnExitListener): void;
 }
 
-class denoHTTPWorker implements DenoHTTPWorker {
-  #onexitListeners: OnExitListener[];
+class denoHTTPWorker extends EventTarget<EventMap> implements DenoHTTPWorker {
   #process: ChildProcess;
   #socketFile: string;
   #stderr: Readable;
@@ -292,7 +293,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
     stdout: Readable,
     stderr: Readable
   ) {
-    this.#onexitListeners = [];
+    super();
     this.#process = process;
     this.#socketFile = socketFile;
     this.#stderr = stderr;
@@ -310,14 +311,12 @@ class denoHTTPWorker implements DenoHTTPWorker {
     }
 
     this.#terminated = true;
-    if (this.#process && this.#process.exitCode === null) {
+    if (this.#process.exitCode === null) {
       forceKill(this.#process.pid!);
     }
 
     fs.rm(this.#socketFile).catch(() => {});
-    for (const onexit of this.#onexitListeners) {
-      onexit(code ?? 1, signal ?? "");
-    }
+    this.emit("exit", code ?? 1, signal ?? "");
   }
 
   async terminate() {
@@ -331,9 +330,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
    */
   async shutdown() {
     this.#process.kill("SIGINT");
-    await new Promise<void>((res) => {
-      this.#process.on("exit", res);
-    });
+    await once(this.#process, "exit");
   }
 
   async websocket(
@@ -384,15 +381,12 @@ class denoHTTPWorker implements DenoHTTPWorker {
   }
 
   get stdout() {
+    //  NOTE: is this a necessary layer of indirection or could we make stdout public?
     return this.#stdout;
   }
 
   get stderr() {
     return this.#stderr;
-  }
-
-  addEventListener(_type: "exit", listener: OnExitListener): void {
-    this.#onexitListeners.push(listener as OnExitListener);
   }
 }
 

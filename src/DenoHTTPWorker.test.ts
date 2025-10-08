@@ -184,7 +184,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       { printOutput: false }
     );
     const codePromise = new Promise((res) => {
-      worker.addEventListener("exit", (code) => res(code));
+      worker.addListener("exit", (code) => res(code));
     });
 
     jsonRequest(worker, "https://localhost/hello?isee=you", {
@@ -211,7 +211,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.stdout.on("data", (data) => (logs += data));
 
     const exitPromise = new Promise<void>((resolve) => {
-      worker.addEventListener("exit", (code) => {
+      worker.addListener("exit", (code) => {
         expect(code).toEqual(0);
         expect(logs).toContain("hi");
         resolve();
@@ -243,7 +243,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     });
   });
 
-  it("should be able to import script", async () => {
+  it("should be able to import script (and call terminate multiple times without incident)", async () => {
     const file = path.resolve(__dirname, "./test/echo-request.ts");
     const url = new URL(`file://${file}`);
     const worker = await newDenoHTTPWorker(url, {
@@ -252,6 +252,9 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     });
 
     await jsonRequest(worker, "http://localhost");
+    await worker.terminate();
+    await worker.terminate();
+    await worker.terminate();
     await worker.terminate();
   });
 
