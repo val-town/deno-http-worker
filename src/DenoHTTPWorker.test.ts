@@ -73,29 +73,6 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     await worker.terminate();
   });
 
-  it("alternate spawnFunc can be provided", async () => {
-    let firstArg = "";
-    const worker = await newDenoHTTPWorker(
-      `
-        export default { async fetch (req: Request): Promise<Response> {
-          let headers = {};
-          for (let [key, value] of req.headers.entries()) {
-            headers[key] = value;
-          }
-          return Response.json({ ok: req.url, headers: headers })
-        } }
-      `,
-      {
-        spawnFunc: (command: string, args: string[], options: SpawnOptions) => {
-          firstArg = args[0] as string;
-          return spawn(command, args, options);
-        },
-      }
-    );
-    expect(firstArg).toEqual("run");
-    await worker.terminate();
-  });
-
   it("don't crash on socket removal", async () => {
     const worker = await newDenoHTTPWorker(
       `

@@ -1,5 +1,5 @@
 import path, { resolve } from "node:path";
-import { spawn, type SpawnOptions } from "node:child_process";
+import { ChildProcess, spawn, type SpawnOptions } from "node:child_process";
 import type { Readable } from "node:stream";
 import readline from "node:readline";
 import fs from "node:fs/promises";
@@ -29,26 +29,6 @@ export class EarlyExitDenoHTTPWorkerError extends Error {
   ) {
     super(message);
   }
-}
-
-export interface MinimalChildProcess {
-  stdout: Readable | null;
-  stderr: Readable | null;
-  readonly pid?: number | undefined;
-  readonly exitCode: number | null;
-  kill(signal?: NodeJS.Signals | number): boolean;
-  on(event: string, listener: (...args: any[]) => void): this;
-  on(
-    event: "close",
-    listener: (code: number | null, signal: NodeJS.Signals | null) => void
-  ): this;
-  on(event: "disconnect", listener: () => void): this;
-  on(event: "error", listener: (err: Error) => void): this;
-  on(
-    event: "exit",
-    listener: (code: number | null, signal: NodeJS.Signals | null) => void
-  ): this;
-  on(event: "spawn", listener: () => void): this;
 }
 
 export interface DenoWorkerOptions {
@@ -97,16 +77,7 @@ export interface DenoWorkerOptions {
   /**
    * Callback that is called when the process is spawned.
    */
-  onSpawn?: (process: MinimalChildProcess) => void;
-
-  /**
-   * Provide an alternative spawn functions. Defaults to child_process.spawn.
-   */
-  spawnFunc: (
-    command: string,
-    args: string[],
-    options: SpawnOptions
-  ) => MinimalChildProcess;
+  onSpawn?: (process: ChildProcess) => void;
 }
 
 /**
@@ -123,7 +94,6 @@ export const newDenoHTTPWorker = async (
     printCommandAndArguments: false,
     spawnOptions: {},
     printOutput: false,
-    spawnFunc: spawn,
     ...options,
   };
 
@@ -203,7 +173,7 @@ export const newDenoHTTPWorker = async (
         console.log("Spawning deno process:", [command, ...args]);
       }
 
-      const process = _options.spawnFunc(command, args, _options.spawnOptions);
+      const process = spawn(command, args, _options.spawnOptions);
       let running = false;
       let exited = false;
       // eslint-disable-next-line prefer-const
@@ -305,7 +275,7 @@ export interface DenoHTTPWorker {
 
 class denoHTTPWorker implements DenoHTTPWorker {
   #onexitListeners: OnExitListener[];
-  #process: MinimalChildProcess;
+  #process: ChildProcess;
   #socketFile: string;
   #stderr: Readable;
   #stdout: Readable;
@@ -314,7 +284,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
 
   constructor(
     socketFile: string,
-    process: MinimalChildProcess,
+    process: ChildProcess,
     stdout: Readable,
     stderr: Readable
   ) {
@@ -327,6 +297,9 @@ class denoHTTPWorker implements DenoHTTPWorker {
     this.#pool = new undici.Pool("http://deno", { socketPath: socketFile });
   }
 
+  /**
+   * Force-kill the process with SIGKILL, firing exit events.
+   */
   async _terminate(code?: number, signal?: string) {
     if (this.#terminated) {
       return;
@@ -347,6 +320,11 @@ class denoHTTPWorker implements DenoHTTPWorker {
     return await this._terminate();
   }
 
+  /**
+   * Kill the process with SIGINT.
+   * This resolves once we receive the 'exit' event from the underlying
+   * process.
+   */
   async shutdown() {
     this.#process.kill("SIGINT");
     await new Promise<void>((res) => {
@@ -358,7 +336,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
     url: string,
     headers: Headers = new Headers()
   ): Promise<WebSocket> {
-    headers = this.#processHeaders(headers, url);
+    headers = processHeaders(headers, url);
     headers.set("x-deno-worker-connection", "upgrade"); // Required for websockets
 
     return new WebSocket(url, {
@@ -368,7 +346,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
   }
 
   async request(options: RequestOptions): Promise<ResponseData> {
-    const headers = this.#processHeaders(
+    const headers = processHeaders(
       options.headers || new Headers(),
       options.url
     );
@@ -388,27 +366,6 @@ class denoHTTPWorker implements DenoHTTPWorker {
         trailers: resp.trailers,
         context: resp.context || {},
       }));
-  }
-
-  #processHeaders(headers: Headers, url: string): Headers {
-    headers.set("x-deno-worker-url", url);
-
-    // To prevent the user from setting these headers, we either update them to
-    // the real host / connection, or clear them
-    headers.delete("x-deno-worker-host");
-    headers.delete("x-deno-worker-connection");
-
-    const host = headers.get("host");
-    if (host) {
-      headers.set("x-deno-worker-host", host);
-    }
-
-    const connection = headers.get("connection");
-    if (connection) {
-      headers.set("x-deno-worker-connection", connection);
-    }
-
-    return headers;
   }
 
   // We send this request to Deno so that we get a live connection in the
@@ -456,4 +413,25 @@ function killUnix(pid: number) {
       throw e;
     }
   }
+}
+
+function processHeaders(headers: Headers, url: string): Headers {
+  headers.set("x-deno-worker-url", url);
+
+  // To prevent the user from setting these headers, we either update them to
+  // the real host / connection, or clear them
+  headers.delete("x-deno-worker-host");
+  headers.delete("x-deno-worker-connection");
+
+  const host = headers.get("host");
+  if (host) {
+    headers.set("x-deno-worker-host", host);
+  }
+
+  const connection = headers.get("connection");
+  if (connection) {
+    headers.set("x-deno-worker-connection", connection);
+  }
+
+  return headers;
 }
