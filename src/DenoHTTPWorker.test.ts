@@ -184,7 +184,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       { printOutput: false }
     );
     const codePromise = new Promise((res) => {
-      worker.addListener("exit", (code) => res(code));
+      worker.on("exit", (code) => res(code));
     });
 
     jsonRequest(worker, "https://localhost/hello?isee=you", {
@@ -211,7 +211,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.stdout.on("data", (data) => (logs += data));
 
     const exitPromise = new Promise<void>((resolve) => {
-      worker.addListener("exit", (code) => {
+      worker.on("exit", (code) => {
         expect(code).toEqual(0);
         expect(logs).toContain("hi");
         resolve();

@@ -7,7 +7,7 @@ import {
 import type { Readable } from "node:stream";
 import readline from "node:readline";
 import fs from "node:fs/promises";
-import EventTarget, { once } from "node:events";
+import EventEmitter, { once } from "node:events";
 import os from "node:os";
 
 import { fileURLToPath } from "node:url";
@@ -245,7 +245,7 @@ export const newDenoHTTPWorker = async (
   });
 };
 
-export interface DenoHTTPWorker extends EventTarget<EventMap> {
+export interface DenoHTTPWorker extends EventEmitter<EventMap> {
   /**
    * Terminate the worker. This kills the process with SIGKILL if it is still
    * running, closes the http2 connection, and deletes the socket file.
@@ -279,7 +279,7 @@ export interface DenoHTTPWorker extends EventTarget<EventMap> {
   get stderr(): Readable;
 }
 
-class denoHTTPWorker extends EventTarget<EventMap> implements DenoHTTPWorker {
+class denoHTTPWorker extends EventEmitter<EventMap> implements DenoHTTPWorker {
   #process: ChildProcess;
   #socketFile: string;
   #stderr: Readable;
