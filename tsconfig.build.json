@@ -1,4 +1,4 @@
 {
-    "extends": "./tsconfig.json",
-    "exclude": ["dist", "deno-bootstrap", "src/test", "**/*.test.ts"]
-  }
+  "extends": "./tsconfig.json",
+  "exclude": ["dist", "deno-bootstrap", "src/test", "**/*.test.ts"]
+}
