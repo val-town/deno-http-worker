@@ -337,6 +337,8 @@ class denoHTTPWorker implements DenoHTTPWorker {
       forceKill(this.#process.pid!);
     }
 
+    await this.#pool.close();
+
     fs.rm(this.#socketFile).catch(() => {});
     for (const onexit of this.#onexitListeners) {
       onexit(code ?? 1, signal ?? "");
@@ -352,6 +354,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
     await new Promise<void>((res) => {
       this.#process.on("exit", res);
     });
+    await this.#pool.close();
   }
 
   async websocket(
