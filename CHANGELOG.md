@@ -1,5 +1,12 @@
 # @valtown/deno-http-worker
 
+## 1.1.3
+
+### Patch Changes
+
+- 1ad123c: Don't include tests in NPM dist
+- c9b56ac: Close request pools when terminating workers
+
 ## 1.1.2
 
 ### Patch Changes
