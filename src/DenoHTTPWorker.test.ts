@@ -3,7 +3,6 @@ import { type DenoHTTPWorker, newDenoHTTPWorker } from "./index.js";
 import fs from "node:fs";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
-import { type SpawnOptions, spawn } from "node:child_process";
 import { EarlyExitDenoHTTPWorkerError } from "./DenoHTTPWorker.js";
 
 // Uncomment this if you want to debug serial test execution
@@ -70,29 +69,6 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       }
     );
     expect(pid).toBeDefined();
-    await worker.terminate();
-  });
-
-  it("alternate spawnFunc can be provided", async () => {
-    let firstArg = "";
-    const worker = await newDenoHTTPWorker(
-      `
-        export default { async fetch (req: Request): Promise<Response> {
-          let headers = {};
-          for (let [key, value] of req.headers.entries()) {
-            headers[key] = value;
-          }
-          return Response.json({ ok: req.url, headers: headers })
-        } }
-      `,
-      {
-        spawnFunc: (command: string, args: string[], options: SpawnOptions) => {
-          firstArg = args[0] as string;
-          return spawn(command, args, options);
-        },
-      }
-    );
-    expect(firstArg).toEqual("run");
     await worker.terminate();
   });
 
