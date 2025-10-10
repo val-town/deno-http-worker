@@ -1,7 +1,9 @@
 import { it as _it, beforeAll, describe, expect, test } from "vitest";
 import { type DenoHTTPWorker, newDenoHTTPWorker } from "./index.js";
 import fs from "node:fs";
-import path from "node:path";
+import fsp from "node:fs/promises";
+import os from "node:os";
+import path, { join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { EarlyExitDenoHTTPWorkerError } from "./DenoHTTPWorker.js";
 
@@ -72,6 +74,42 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     await worker.terminate();
   });
 
+  it("crash on a bad lockfile", async () => {
+    const tmpDir = await fsp.mkdtemp(join(os.tmpdir(), "vt-"));
+    const lockfile = join(tmpDir, "deno.lock");
+    fs.writeFileSync(lockfile, "{");
+    await expect(
+      newDenoHTTPWorker(
+        `
+        export default { async fetch (req: Request): Promise<Response> {
+          await Deno.removeSync(Deno.args[0]);
+          return Response.json({ ok: req.url })
+        } }
+      `,
+        { printOutput: false, runFlags: [`--lock=${lockfile}`] }
+      )
+    ).rejects.toMatchObject({
+      message: "Deno exited before being ready",
+      stderr: "",
+      stdout: expect.stringContaining("Lockfile may be corrupt"),
+    });
+  });
+
+  it("crash on invalid syntax", async () => {
+    await expect(
+      newDenoHTTPWorker(
+        `
+        {
+      `,
+        { printOutput: false }
+      )
+    ).rejects.toMatchObject({
+      message: "Deno exited before being ready",
+      stderr: "",
+      stdout: expect.stringContaining("TypeError: Expected"),
+    });
+  });
+
   it("don't crash on socket removal", async () => {
     const worker = await newDenoHTTPWorker(
       `
@@ -104,17 +142,19 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       `,
       { printOutput: false }
     );
-    for (let i = 0; i < 10; i++) {
-      const json = await jsonRequest(
-        worker,
-        "https://localhost/hello?isee=you",
-        { headers: { accept: "application/json" } }
-      );
-      expect(json).toEqual({
-        ok: "https://localhost/hello?isee=you",
-        headers: { accept: "application/json", "content-length": "0" }, // undici adds content-length
-      });
-    }
+    await Promise.all(
+      Array.from({ length: 10 }, async () => {
+        const json = await jsonRequest(
+          worker,
+          "https://localhost/hello?isee=you",
+          { headers: { accept: "application/json" } }
+        );
+        expect(json).toEqual({
+          ok: "https://localhost/hello?isee=you",
+          headers: { accept: "application/json", "content-length": "0" }, // undici adds content-length
+        });
+      })
+    );
     await worker.terminate();
   });
 
@@ -139,6 +179,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
 
     await worker.terminate();
   });
+
   it("onError not handled", { timeout: 20_000 }, async () => {
     // onError is not called in all cases, for example, here I can pass a
     // readable stream and the error is only caught by the global onerror handler.
@@ -159,14 +200,13 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       headers: { accept: "application/json" },
     }).catch(() => {});
 
-    for (;;) {
-      const stderr = worker.stderr.read();
-      if (stderr) {
-        expect(stderr.toString()).toContain("Error: uncaught!");
+    for await (const chunk of worker.stderr) {
+      if (chunk) {
+        expect(chunk.toString()).toContain("Error: uncaught!");
         break;
       }
-      await new Promise((resolve) => setTimeout(resolve, 100));
     }
+
     await worker.terminate();
   });
 
