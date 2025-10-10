@@ -1,7 +1,9 @@
 import { it as _it, beforeAll, describe, expect, test } from "vitest";
 import { type DenoHTTPWorker, newDenoHTTPWorker } from "./index.js";
 import fs from "node:fs";
-import path from "node:path";
+import os from "node:os";
+import fsp from "node:fs/promises";
+import path, { join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { EarlyExitDenoHTTPWorkerError } from "./DenoHTTPWorker.js";
 
@@ -70,6 +72,68 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     );
     expect(pid).toBeDefined();
     await worker.terminate();
+  });
+
+  it("crash on a corrupted lockfile", async () => {
+    const tmpDir = await fsp.mkdtemp(join(os.tmpdir(), "vt-"));
+    const lockfile = join(tmpDir, "deno.lock");
+    fs.writeFileSync(lockfile, "{");
+    await expect(
+      newDenoHTTPWorker(
+        `
+        export default { async fetch (req: Request): Promise<Response> {
+          await Deno.removeSync(Deno.args[0]);
+          return Response.json({ ok: req.url })
+        } }
+      `,
+        { printOutput: false, runFlags: [`--lock=${lockfile}`] }
+      )
+    ).rejects.toMatchObject({
+      message: "Deno exited before being ready",
+      stdout: undefined,
+      stderr: expect.stringContaining("Lockfile may be corrupt"),
+    });
+  });
+
+  // This test uses the network so it is disabled by default, but use
+  // it for debugging lockfile errors
+  it.skip("crash on an invalid lockfile", async () => {
+    const tmpDir = await fsp.mkdtemp(join(os.tmpdir(), "vt-"));
+    const lockfile = join(tmpDir, "deno.lock");
+    fs.writeFileSync(join(tmpDir, "deno.json"), "{}");
+    fs.writeFileSync(
+      lockfile,
+      JSON.stringify({
+        version: "5",
+        specifiers: {
+          "npm:is-number@*": "7.0.0",
+          "npm:is-number@7.0.0": "7.0.0",
+        },
+        npm: {
+          "is-number@7.0.0": {
+            integrity:
+              "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0104MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==",
+          },
+        },
+      })
+    );
+
+    await expect(
+      newDenoHTTPWorker(
+        `
+        import isN from "npm:is-number@7.0.0";
+        export default { async fetch (req: Request): Promise<Response> {
+          await Deno.removeSync(Deno.args[0]);
+          return Response.json({ ok: isN('hi') })
+        } }
+      `,
+        { printOutput: false, runFlags: ["--reload", `--lock=${lockfile}`] }
+      )
+    ).rejects.toMatchObject({
+      message: "Deno exited before being ready",
+      stdout: undefined,
+      stderr: expect.stringContaining("Tarball checksum"),
+    });
   });
 
   it("don't crash on socket removal", async () => {
@@ -187,9 +251,38 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       worker.addEventListener("exit", (code) => res(code));
     });
 
-    jsonRequest(worker, "https://localhost/hello?isee=you", {
-      headers: { accept: "application/json" },
-    }).catch(() => {});
+    await expect(
+      jsonRequest(worker, "https://localhost/hello?isee=you", {
+        headers: { accept: "application/json" },
+      })
+    ).resolves.toEqual(null);
+
+    expect(await codePromise).toEqual(1);
+    await worker.terminate();
+  });
+
+  it("intentional deno exits cause a socket error", async () => {
+    const worker = await newDenoHTTPWorker(
+      `
+        export default { async fetch (req: Request): Promise<Response> {
+          Deno.exit(1);
+        }}
+      `,
+      { printOutput: false }
+    );
+    const codePromise = new Promise((res) => {
+      worker.addEventListener("exit", (code) => {
+        res(code);
+      });
+    });
+
+    await expect(
+      jsonRequest(worker, "https://localhost/hello?isee=you", {
+        headers: { accept: "application/json" },
+      })
+    ).rejects.toMatchObject({
+      message: "other side closed",
+    });
 
     expect(await codePromise).toEqual(1);
     await worker.terminate();
