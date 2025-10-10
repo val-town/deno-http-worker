@@ -8,6 +8,7 @@ import type { Readable } from "node:stream";
 import readline from "node:readline";
 import fs from "node:fs/promises";
 import os from "node:os";
+import { once } from "node:events";
 
 import { fileURLToPath } from "node:url";
 import undici, { WebSocket } from "undici";
@@ -162,17 +163,18 @@ export const newDenoHTTPWorker = async (
     "utf-8"
   );
 
+  const args = [
+    ...(typeof _options.denoExecutable === "string"
+      ? []
+      : _options.denoExecutable.slice(1)),
+    "run",
+    ..._options.runFlags,
+    `data:text/typescript,${encodeURIComponent(bootstrap)}`,
+    ...scriptArgs,
+  ];
+
   return new Promise((resolve, reject) => {
     (async (): Promise<DenoHTTPWorker> => {
-      const args = [
-        ...(typeof _options.denoExecutable === "string"
-          ? []
-          : _options.denoExecutable.slice(1)),
-        "run",
-        ..._options.runFlags,
-        `data:text/typescript,${encodeURIComponent(bootstrap)}`,
-        ...scriptArgs,
-      ];
       if (_options.printCommandAndArguments) {
         console.log("Spawning deno process:", [command, ...args]);
       }
@@ -331,9 +333,7 @@ class denoHTTPWorker implements DenoHTTPWorker {
    */
   async shutdown() {
     this.#process.kill("SIGINT");
-    await new Promise<void>((res) => {
-      this.#process.on("exit", res);
-    });
+    await once(this.#process, "exit");
   }
 
   async websocket(
