@@ -23,7 +23,7 @@ jobs:
       - name: Setup Node.js 22
         uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Use Deno Version 2.5.3
         uses: denolib/setup-deno@master
