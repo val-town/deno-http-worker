@@ -1,12 +1,18 @@
 import path, { resolve } from "node:path";
-import { spawn, type SpawnOptions } from "node:child_process";
+import {
+  type ChildProcess,
+  spawn,
+  type SpawnOptions,
+} from "node:child_process";
 import type { Readable } from "node:stream";
 import readline from "node:readline";
-import http from "node:http";
 import fs from "node:fs/promises";
+import EventEmitter, { once } from "node:events";
 import os from "node:os";
 
 import { fileURLToPath } from "node:url";
+import undici, { WebSocket } from "undici";
+import type { ResponseData, RequestOptions } from "./types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,7 +22,13 @@ const DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH = resolve(
   "../deno-bootstrap/index.ts"
 );
 
-type OnExitListener = (exitCode: number, signal: string) => void;
+/**
+ * The types of events that can be subscribed to in the Deno
+ * worker.
+ */
+type EventMap = {
+  exit: [number, string];
+};
 
 export class EarlyExitDenoHTTPWorkerError extends Error {
   constructor(
@@ -28,26 +40,6 @@ export class EarlyExitDenoHTTPWorkerError extends Error {
   ) {
     super(message);
   }
-}
-
-export interface MinimalChildProcess {
-  stdout: Readable | null;
-  stderr: Readable | null;
-  readonly pid?: number | undefined;
-  readonly exitCode: number | null;
-  kill(signal?: NodeJS.Signals | number): boolean;
-  on(event: string, listener: (...args: any[]) => void): this;
-  on(
-    event: "close",
-    listener: (code: number | null, signal: NodeJS.Signals | null) => void
-  ): this;
-  on(event: "disconnect", listener: () => void): this;
-  on(event: "error", listener: (err: Error) => void): this;
-  on(
-    event: "exit",
-    listener: (code: number | null, signal: NodeJS.Signals | null) => void
-  ): this;
-  on(event: "spawn", listener: () => void): this;
 }
 
 export interface DenoWorkerOptions {
@@ -96,16 +88,7 @@ export interface DenoWorkerOptions {
   /**
    * Callback that is called when the process is spawned.
    */
-  onSpawn?: (process: MinimalChildProcess) => void;
-
-  /**
-   * Provide an alternative spawn functions. Defaults to child_process.spawn.
-   */
-  spawnFunc: (
-    command: string,
-    args: string[],
-    options: SpawnOptions
-  ) => MinimalChildProcess;
+  onSpawn?: (process: ChildProcess) => void;
 }
 
 /**
@@ -122,7 +105,6 @@ export const newDenoHTTPWorker = async (
     printCommandAndArguments: false,
     spawnOptions: {},
     printOutput: false,
-    spawnFunc: spawn,
     ...options,
   };
 
@@ -182,7 +164,10 @@ export const newDenoHTTPWorker = async (
       ? _options.denoExecutable
       : (_options.denoExecutable[0] as string);
 
-  const bootstrap = await fs.readFile(_options.denoBootstrapScriptPath, "utf-8");
+  const bootstrap = await fs.readFile(
+    _options.denoBootstrapScriptPath,
+    "utf-8"
+  );
 
   return new Promise((resolve, reject) => {
     (async (): Promise<DenoHTTPWorker> => {
@@ -192,18 +177,19 @@ export const newDenoHTTPWorker = async (
           : _options.denoExecutable.slice(1)),
         "run",
         ..._options.runFlags,
-        "data:text/typescript," + encodeURIComponent(bootstrap),
+        `data:text/typescript,${encodeURIComponent(bootstrap)}`,
         ...scriptArgs,
       ];
       if (_options.printCommandAndArguments) {
         console.log("Spawning deno process:", [command, ...args]);
       }
 
-      const process = _options.spawnFunc(command, args, _options.spawnOptions);
+      const process = spawn(command, args, _options.spawnOptions);
       let running = false;
       let exited = false;
-      let worker: DenoHTTPWorker | undefined = undefined;
-      process.on("exit", (code: number, signal: string) => {
+      // eslint-disable-next-line prefer-const
+      let worker: DenoHTTPWorker | undefined;
+      process.on("exit", async (code: number, signal: string) => {
         exited = true;
         if (!running) {
           const stderr = process.stderr?.read()?.toString();
@@ -217,9 +203,9 @@ export const newDenoHTTPWorker = async (
               signal
             )
           );
-          fs.rm(socketFile).catch(() => {});
+          await fs.rm(socketFile).catch(() => {});
         } else {
-          (worker as denoHTTPWorker)._terminate(code, signal);
+          await (worker as denoHTTPWorker)._terminate(code, signal);
         }
       });
       options.onSpawn && options.onSpawn(process);
@@ -244,7 +230,7 @@ export const newDenoHTTPWorker = async (
           await fs.stat(socketFile);
           // File exists
           break;
-        } catch (err) {
+        } catch {
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
       }
@@ -259,148 +245,148 @@ export const newDenoHTTPWorker = async (
   });
 };
 
-export interface DenoHTTPWorker {
+export interface DenoHTTPWorker extends EventEmitter<EventMap> {
   /**
    * Terminate the worker. This kills the process with SIGKILL if it is still
    * running, closes the http2 connection, and deletes the socket file.
    */
-  terminate(): void;
+  terminate(): Promise<void>;
 
   /**
    * Gracefully shuts down the worker process and waits for any unresolved
    * promises to exit.
    */
-  shutdown(): void;
+  shutdown(): Promise<void>;
 
   /**
-   * request calls http.request but patches the options to work with our
+   * request calls undici.request but patches the options to work with our
    * connection pool and safely handle rewriting various headers.
    */
-  request(
-    url: string | URL,
-    options: http.RequestOptions,
-    callback: (response: http.IncomingMessage) => void
-  ): http.ClientRequest;
+  request: (ops: RequestOptions) => Promise<ResponseData>;
+
+  /**
+   * Opens a WebSocket connection to the given URL in the worker process.
+   *
+   * Note that we internally modify request headers in the proxying path, and in
+   * order to achieve this for WebSockets we patch the `Deno.upgradeWebSocket`
+   * method to use the original unmodified request, since Deno doesn't let us
+   * use a cloned Request object.
+   */
+  websocket(url: string, headers?: Headers): Promise<WebSocket>;
 
   get stdout(): Readable;
 
   get stderr(): Readable;
-
-  /**
-   * Adds the given listener for the "exit" event.
-   */
-  addEventListener(type: "exit", listener: OnExitListener): void;
 }
 
-class denoHTTPWorker {
-  #onexitListeners: OnExitListener[];
-  #process: MinimalChildProcess;
+class denoHTTPWorker extends EventEmitter<EventMap> implements DenoHTTPWorker {
+  #process: ChildProcess;
   #socketFile: string;
   #stderr: Readable;
   #stdout: Readable;
   #terminated = false;
-  #agent: http.Agent;
+  #pool: undici.Pool;
 
   constructor(
     socketFile: string,
-    process: MinimalChildProcess,
+    process: ChildProcess,
     stdout: Readable,
     stderr: Readable
   ) {
-    this.#onexitListeners = [];
+    super();
     this.#process = process;
     this.#socketFile = socketFile;
     this.#stderr = stderr;
     this.#stdout = stdout;
-    this.#agent = new http.Agent({ keepAlive: true });
+
+    this.#pool = new undici.Pool("http://deno", { socketPath: socketFile });
   }
 
-  _terminate(code?: number, signal?: string) {
+  /**
+   * Force-kill the process with SIGKILL, firing exit events.
+   */
+  async _terminate(code?: number, signal?: string) {
     if (this.#terminated) {
       return;
     }
+
     this.#terminated = true;
-    if (this.#process && this.#process.exitCode === null) {
+    if (this.#process.exitCode === null) {
       forceKill(this.#process.pid!);
     }
-    this.#agent.destroy();
+
     fs.rm(this.#socketFile).catch(() => {});
-    for (const onexit of this.#onexitListeners) {
-      onexit(code ?? 1, signal ?? "");
-    }
+    this.emit("exit", code ?? 1, signal ?? "");
   }
 
-  terminate() {
-    this._terminate();
+  async terminate() {
+    return await this._terminate();
   }
 
-  shutdown() {
+  /**
+   * Kill the process with SIGINT.
+   * This resolves once we receive the 'exit' event from the underlying
+   * process.
+   */
+  async shutdown() {
     this.#process.kill("SIGINT");
+    await once(this.#process, "exit");
   }
 
-  request(
-    url: string | URL,
-    options: http.RequestOptions,
-    callback: (response: http.IncomingMessage) => void
-  ): http.ClientRequest {
-    options.headers = (options.headers || {}) as http.OutgoingHttpHeaders;
+  async websocket(
+    url: string,
+    headers: Headers = new Headers()
+  ): Promise<WebSocket> {
+    headers = processHeaders(headers, url);
+    headers.set("x-deno-worker-connection", "upgrade"); // Required for websockets
 
-    // TODO: ensure these are handled with the correct casing?
-    delete options.headers["x-deno-worker-host"];
-    delete options.headers["x-deno-worker-connection"];
+    return new WebSocket(url, {
+      dispatcher: this.#pool,
+      headers,
+    });
+  }
 
-    // NodeJS will send both the host and the connection headers
-    // (https://nodejs.org/api/http.html#new-agentoptions). We don't want these
-    // to make it to Deno unless they are explicitly set by the user. So store
-    // them to reconstruct on the other size.
-    if (options.headers.host) {
-      options.headers["X-Deno-Worker-Host"] = options.headers.host;
-    }
-    if (options.headers.connection) {
-      options.headers["X-Deno-Worker-Connection"] = options.headers.connection;
-    }
+  async request(options: RequestOptions): Promise<ResponseData> {
+    const headers = processHeaders(
+      options.headers || new Headers(),
+      options.url
+    );
 
-    options.headers = {
-      ...options.headers,
-      "X-Deno-Worker-URL": typeof url === "string" ? url : url.toString(),
-    };
-    url = "http://deno";
-    options.agent = this.#agent;
-    options.socketPath = this.#socketFile;
-    return http.request(url, options, callback);
+    return await this.#pool
+      .request({
+        ...options,
+        origin: "http://deno",
+        path: "/",
+        query: {},
+        headers,
+      })
+      .then((resp) => ({
+        statusCode: resp.statusCode,
+        headers: resp.headers,
+        body: resp.body,
+        trailers: resp.trailers,
+        context: resp.context || {},
+      }));
   }
 
   // We send this request to Deno so that we get a live connection in the
   // http.Agent and subsequent requests are do not have to wait for a new
   // connection.
   async warmRequest() {
-    return new Promise<void>((resolve, reject) => {
-      const req = http.request(
-        "http://deno",
-        { agent: this.#agent, socketPath: this.#socketFile },
-        (resp) => {
-          resp.on("error", reject);
-          resp.on("data", () => {});
-          resp.on("close", () => {
-            resolve();
-          });
-        }
-      );
-      req.on("error", reject);
-      req.end();
+    return await this.#pool.request({
+      origin: "http://deno",
+      method: "GET",
+      path: "/",
     });
   }
 
   get stdout() {
+    //  NOTE: is this a necessary layer of indirection or could we make stdout public?
     return this.#stdout;
   }
 
   get stderr() {
     return this.#stderr;
-  }
-
-  addEventListener(type: "exit", listener: OnExitListener): void {
-    this.#onexitListeners.push(listener as OnExitListener);
   }
 }
 
@@ -425,4 +411,25 @@ function killUnix(pid: number) {
       throw e;
     }
   }
+}
+
+function processHeaders(headers: Headers, url: string): Headers {
+  headers.set("x-deno-worker-url", url);
+
+  // To prevent the user from setting these headers, we either update them to
+  // the real host / connection, or clear them
+  headers.delete("x-deno-worker-host");
+  headers.delete("x-deno-worker-connection");
+
+  const host = headers.get("host");
+  if (host) {
+    headers.set("x-deno-worker-host", host);
+  }
+
+  const connection = headers.get("connection");
+  if (connection) {
+    headers.set("x-deno-worker-connection", connection);
+  }
+
+  return headers;
 }

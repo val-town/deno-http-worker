@@ -3,7 +3,6 @@ import { type DenoHTTPWorker, newDenoHTTPWorker } from "./index.js";
 import fs from "node:fs";
 import path from "node:path";
 import { Worker } from "node:worker_threads";
-import { type SpawnOptions, spawn } from "node:child_process";
 import { EarlyExitDenoHTTPWorkerError } from "./DenoHTTPWorker.js";
 
 // Uncomment this if you want to debug serial test execution
@@ -14,25 +13,19 @@ const DEFAULT_HTTP_VAL = `export default async function (req: Request): Promise<
   return Response.json({ ok: true })
 } `;
 
-const jsonRequest = (
+const jsonRequest = async (
   worker: DenoHTTPWorker,
   url: string,
   opts?: { headers?: { [key: string]: string }; body?: string }
 ): Promise<any> => {
-  return new Promise((resolve, reject) => {
-    const req = worker.request(url, opts || {}, (resp) => {
-      const body: any[] = [];
-      resp.on("error", reject);
-      resp.on("data", (chunk) => {
-        body.push(chunk);
-      });
-      resp.on("end", () => {
-        resolve(JSON.parse(Buffer.concat(body).toString()));
-      });
-    });
-    req.on("error", reject);
-    req.end();
+  const resp = await worker.request({
+    url,
+    headers: new Headers(opts?.headers),
+    body: opts?.body,
+    method: "POST",
   });
+
+  return resp.body.json();
 };
 
 test("EarlyExitDenoHTTPWorkerError", () => {
@@ -44,13 +37,13 @@ test("EarlyExitDenoHTTPWorkerError", () => {
 describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   const echoFile = path.resolve(__dirname, "./test/echo-request.ts");
   const echoScript = fs.readFileSync(echoFile, { encoding: "utf-8" });
+  const echoWebsocketFile = path.resolve(__dirname, "./test/echo-websocket.ts");
   const vtFile = path.resolve(__dirname, "./test/val-town.ts");
   const vtScript = fs.readFileSync(vtFile, { encoding: "utf-8" });
 
   beforeAll(() => {
     // Clean up sockets that might have been left around during terminated test
     // runs.
-    // biome-ignore lint/complexity/noForEach: this is a test file
     fs.readdirSync(".").forEach((file) => {
       if (path.basename(file).endsWith("-deno-http.sock")) {
         fs.rmSync(file);
@@ -73,34 +66,10 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
         onSpawn: (process) => {
           pid = process.pid;
         },
-        printOutput: true,
       }
     );
     expect(pid).toBeDefined();
-    worker.terminate();
-  });
-
-  it("alternate spawnFunc can be provided", async () => {
-    let firstArg = "";
-    const worker = await newDenoHTTPWorker(
-      `
-        export default { async fetch (req: Request): Promise<Response> {
-          let headers = {};
-          for (let [key, value] of req.headers.entries()) {
-            headers[key] = value;
-          }
-          return Response.json({ ok: req.url, headers: headers })
-        } }
-      `,
-      {
-        spawnFunc: (command: string, args: string[], options: SpawnOptions) => {
-          firstArg = args[0] as string;
-          return spawn(command, args, options);
-        },
-      }
-    );
-    expect(firstArg).toEqual("run");
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("don't crash on socket removal", async () => {
@@ -111,7 +80,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
           return Response.json({ ok: req.url })
         } }
       `,
-      { printOutput: true }
+      { printOutput: false }
     );
     const json = await jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
@@ -119,7 +88,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     expect(json).toEqual({
       ok: "https://localhost/hello?isee=you",
     });
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("json response multiple requests", async () => {
@@ -133,7 +102,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
           return Response.json({ ok: req.url, headers: headers })
         } }
       `,
-      { printOutput: true }
+      { printOutput: false }
     );
     for (let i = 0; i < 10; i++) {
       const json = await jsonRequest(
@@ -143,10 +112,10 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       );
       expect(json).toEqual({
         ok: "https://localhost/hello?isee=you",
-        headers: { accept: "application/json" },
+        headers: { accept: "application/json", "content-length": "0" }, // undici adds content-length
       });
     }
-    worker.terminate();
+    await worker.terminate();
   });
 
   it("onError", async () => {
@@ -158,7 +127,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
           return Response.json({ error: error.message }, { status: 500 })
         }}
       `,
-      { printOutput: true }
+      { printOutput: false }
     );
     const json = await jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
@@ -168,11 +137,11 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
         "Return value from serve handler must be a response or a promise resolving to a response",
     });
 
-    worker.terminate();
+    await worker.terminate();
   });
-
   it("onError not handled", { timeout: 20_000 }, async () => {
-    // onError is not called for errors that happen outside the request
+    // onError is not called in all cases, for example, here I can pass a
+    // readable stream and the error is only caught by the global onerror handler.
     const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
@@ -198,11 +167,11 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    worker.terminate();
+    await worker.terminate();
   });
 
-  it("unhandled rejection", { timeout: 20_000 }, async () => {
-    // onError is not called for unhandled rejections that happen outside the request
+  it("unhandled rejection", async () => {
+    // the process **does** die for unhandled rejections
     const worker = await newDenoHTTPWorker(
       `
         export default { async fetch (req: Request): Promise<Response> {
@@ -214,19 +183,16 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       `,
       { printOutput: false }
     );
+    const codePromise = new Promise((res) => {
+      worker.on("exit", (code) => res(code));
+    });
+
     jsonRequest(worker, "https://localhost/hello?isee=you", {
       headers: { accept: "application/json" },
     }).catch(() => {});
 
-    for (;;) {
-      const stderr = worker.stderr.read();
-      if (stderr) {
-        expect(stderr.toString()).toContain("Error: uncaught!");
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    worker.terminate();
+    expect(await codePromise).toEqual(1);
+    await worker.terminate();
   });
 
   it("shutdown gracefully", async () => {
@@ -237,7 +203,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
           return Response.json({ ok: req.url })
         }}
       `,
-      { printOutput: true }
+      { printOutput: false }
     );
 
     let logs = "";
@@ -245,7 +211,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     worker.stdout.on("data", (data) => (logs += data));
 
     const exitPromise = new Promise<void>((resolve) => {
-      worker.addEventListener("exit", (code) => {
+      worker.on("exit", (code) => {
         expect(code).toEqual(0);
         expect(logs).toContain("hi");
         resolve();
@@ -255,7 +221,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     expect(json).toEqual({
       ok: "https://localhost/hello?isee=you",
     });
-    worker.shutdown();
+    void worker.shutdown();
     await exitPromise;
   });
 
@@ -269,7 +235,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       "--allow-write=bar,/dev/null",
     ])("should handle %s", async (flag) => {
       const worker = await newDenoHTTPWorker(echoScript, {
-        printOutput: true,
+        printOutput: false,
         runFlags: [flag],
       });
       await jsonRequest(worker, "http://localhost");
@@ -277,195 +243,94 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
     });
   });
 
-  it("should be able to import script", async () => {
+  it("should be able to import script (and call terminate multiple times without incident)", async () => {
     const file = path.resolve(__dirname, "./test/echo-request.ts");
     const url = new URL(`file://${file}`);
     const worker = await newDenoHTTPWorker(url, {
-      printOutput: true,
-      printCommandAndArguments: true,
+      printOutput: false,
+      printCommandAndArguments: false,
     });
 
     await jsonRequest(worker, "http://localhost");
-    worker.terminate();
+    await worker.terminate();
+    await worker.terminate();
+    await worker.terminate();
+    await worker.terminate();
   });
 
   it("host and connection is not overwritten", async () => {
     const worker = await newDenoHTTPWorker(echoScript, {
-      printOutput: true,
+      printOutput: false,
     });
     const resp: any = await jsonRequest(worker, "https://localhost/", {
-      headers: { connection: "happy", host: "fish" },
+      headers: {
+        connection: "keep-alive",
+        host: "bear.example.com",
+        "x-foo-bar": "buzz",
+      },
     });
-    expect(resp.headers.connection).toEqual("happy");
-    expect(resp.headers.host).toEqual("fish");
-    worker.terminate();
+    expect(resp.headers.connection).toEqual("keep-alive");
+    expect(resp.headers.host).toEqual("bear.example.com");
+    expect(resp.headers["x-foo-bar"]).toEqual("buzz");
+    await worker.terminate();
   });
 
-  // it("json response", async () => {
-  //   let worker = await newDenoHTTPWorker(echoScript);
-
-  //   const t0 = performance.now();
-  //   let resp = (await worker.client
-  //     .post("https://localhost/", { json: { ok: true } })
-  //     .json()) as any;
-  //   expect(resp.body).toEqual('{"ok":true}');
-  //   console.log("Got time", performance.now() - t0);
-
-  //   // TODO: test against streaming resp as well as request body
-  //   let req = worker.client.post("https://localhost/", {
-  //     body: fs.createReadStream(import.meta.url.replace("file://", "")),
-  //   });
-
-  //   let body: any = await req.json();
-  //   expect(body.body).toEqual(
-  //     fs.readFileSync(import.meta.url.replace("file://", "")).toString()
-  //   );
-
-  //   worker.terminate();
-  // });
+  it("host and connection cannot be set by user", async () => {
+    const worker = await newDenoHTTPWorker(echoScript);
+    const resp: any = await jsonRequest(worker, "https://localhost/", {
+      headers: {
+        connection: "keep-alive",
+        host: "bear.example.com",
+        "x-deno-worker-host": "should-not-be-able-to-set",
+      },
+    });
+    expect(resp.headers["x-deno-worker-host"]).toBeUndefined();
+    await worker.terminate();
+  });
 
   it("use http directly", async () => {
     const worker = await newDenoHTTPWorker(echoScript, { printOutput: true });
 
     await new Promise((resolve) => setTimeout(resolve, 300));
 
-    const t0 = performance.now();
-    const json = await new Promise((resolve) => {
-      const req = worker.request("http://localhost/hi", {}, (resp) => {
-        const body: any[] = [];
-        resp.on("data", (chunk) => {
-          body.push(chunk);
-        });
-        resp.on("end", () => {
-          resolve(JSON.parse(Buffer.concat(body).toString()));
-        });
-      });
-      req.end();
+    const resp = await worker.request({
+      url: "http://localhost/hi",
+      method: "GET",
     });
-    console.log("http request time", performance.now() - t0);
+    const json = await resp.body.json();
+
     expect(json).toEqual({
       url: "http://localhost/hi",
       headers: {},
       body: "",
       method: "GET",
     });
-    worker.terminate();
+    await worker.terminate();
   });
-
-  // it("post with body", async () => {
-  //   let worker = await newDenoHTTPWorker(`
-  //       export default async function (req: Request): Promise<Response> {
-  //         let body = await req.text();
-  //         return Response.json({ length: body.length })
-  //       }
-  //     `);
-
-  //   let resp = worker.client("https://localhost:8080/", {
-  //     body: "hello",
-  //     method: "POST",
-  //   });
-  //   expect(await resp.json()).toEqual({ length: 5 });
-  //   worker.terminate();
-  // });
-
-  // it("can implement val town", async () => {
-  //   let worker = await newDenoHTTPWorker(vtScript, { printOutput: true });
-
-  //   const t0 = performance.now();
-  //   let first = worker.client.post("https://localhost:8080/", {
-  //     body: "data:text/tsx," + encodeURIComponent(DEFAULT_HTTP_VAL),
-  //   });
-  //   // We send a request to initialize and when the first request is in flight
-  //   // we send another request
-  //   let second = worker.client("https://foo.web.val.run");
-
-  //   expect((await first).statusCode).toEqual(200);
-  //   expect(await first.text()).toEqual("vt-done");
-  //   expect(await second.text()).toEqual('{"ok":true}');
-  //   console.log("double request got val: ", performance.now() - t0);
-  //   worker.terminate();
-  // });
 
   it("can implement val town with http.request", async () => {
     const worker = await newDenoHTTPWorker(vtScript, { printOutput: true });
 
-    const t0 = performance.now();
-    await new Promise((resolve, reject) => {
-      const req = worker.request(
-        "http://vt",
-        {
-          headers: {
-            "Content-Type": "application/json",
-          },
-          method: "POST",
-        },
-        (resp) => {
-          const body: any[] = [];
-          resp.on("data", (chunk) => {
-            body.push(chunk);
-          });
-          resp.on("end", () => {
-            resolve(Buffer.concat(body).toString());
-          });
-        }
-      );
-      req.on("error", reject);
-      req.write(`data:text/tsx,${encodeURIComponent(DEFAULT_HTTP_VAL)}`);
-      req.end();
+    await worker.request({
+      url: "http://vt/",
+      method: "POST",
+      headers: new Headers({
+        "Content-Type": "application/json",
+      }),
+      body: `data:text/tsx,${encodeURIComponent(DEFAULT_HTTP_VAL)}`,
     });
 
-    const text = await new Promise((resolve) => {
-      const req = worker.request(
-        "https://localhost:1234",
-        { headers: {} },
-        (resp) => {
-          const body: any[] = [];
-          resp.on("data", (chunk) => {
-            body.push(chunk);
-          });
-          resp.on("end", () => {
-            resolve(Buffer.concat(body).toString());
-          });
-        }
-      );
-      req.end();
-    });
+    const text = await worker
+      .request({
+        url: "http://vt/",
+        method: "GET",
+      })
+      .then((resp) => resp.body.text());
+
     expect(text).toEqual('{"ok":true}');
-    console.log("Double request http2 val:", performance.now() - t0);
     // await initReq;
-    worker.terminate();
+    await worker.terminate();
   });
-  // it("val town import header", async () => {
-  //   let worker = await newDenoHTTPWorker(vtHeaderScript, { printOutput: true });
-
-  //   const t0 = performance.now();
-  //   let text = await new Promise((resolve) => {
-  //     let req = worker.request(
-  //       "https://localhost:1234",
-  //       {
-  //         headers: {
-  //           "X-VT-Import": `data:text/tsx,${encodeURIComponent(
-  //             DEFAULT_HTTP_VAL
-  //           )}`,
-  //         },
-  //       },
-  //       (resp) => {
-  //         const body: any[] = [];
-  //         resp.on("data", (chunk) => {
-  //           body.push(chunk);
-  //         });
-  //         resp.on("end", () => {
-  //           resolve(Buffer.concat(body).toString());
-  //         });
-  //       }
-  //     );
-  //     req.end();
-  //   });
-  //   expect(text).toEqual('{"ok":true}');
-  //   console.log("single request:", performance.now() - t0);
-  //   // await initReq;
-  //   worker.terminate();
-  // });
 
   it("can test that snippets in readme run successfully", async () => {
     const rm = fs.readFileSync(path.resolve(__dirname, "../README.md"), {
@@ -477,31 +342,119 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
       .filter((line) => line.startsWith("ts\n"))
       .map((line) => line.slice(3));
     for (let source of toTest) {
-      source = source.replaceAll(
-        "import { newDenoHTTPWorker } from 'deno-http-worker';",
+      const replacedSource = source.replaceAll(
+        'import { newDenoHTTPWorker } from "@valtown/deno-http-worker";',
         "const { newDenoHTTPWorker } = await import('./dist/index.js');          "
       );
-      source = `(async () => {${source}})()`;
+      if (replacedSource === source) {
+        throw new Error(
+          "No replacement found in readme, do you need to update the replacement string?"
+        );
+      }
+      source = `(async () => {${replacedSource}})()`;
 
       await new Promise<void>((resolve, reject) => {
         const worker = new Worker(source, {
           eval: true,
         });
-        worker.stderr.on("data", (data) => {
-          console.error(data.toString());
+        worker.stderr.on("data", () => {
+          // console.error(data.toString());
         });
-        worker.stdout.on("data", (data) => {
-          console.error(data.toString());
+        worker.stdout.on("data", () => {
+          // console.error(data.toString());
         });
         worker.on("error", (e) => {
-          console.log(e.stack);
           reject(e);
         });
-        worker.on("exit", (code) => {
-          console.log(code);
+        worker.on("exit", () => {
           resolve();
         });
       });
     }
+  });
+
+  it("can upgrade websocket", async () => {
+    const webSocketScriptStr = fs.readFileSync(echoWebsocketFile, {
+      encoding: "utf-8",
+    });
+    const worker = await newDenoHTTPWorker(webSocketScriptStr, {
+      printOutput: false,
+    });
+
+    const messages: string[] = [];
+    const ws = await worker.websocket("ws://localhost/echo");
+    const event = await new Promise<Event>((res) => {
+      ws.addEventListener("open", (event) => {
+        ws.send("message1");
+        res(event);
+      });
+      ws.addEventListener("message", (event) => {
+        messages.push(event.data);
+      });
+      ws.addEventListener("close", (event) => {
+        expect(event.code).toEqual(4001);
+        expect(event.reason).toEqual("bye");
+        res(event);
+      });
+    });
+    expect(event.type).toEqual("open");
+
+    ws.send("message2");
+    ws.send("message3");
+
+    await new Promise((res) => setTimeout(res, 50));
+
+    expect(messages).toEqual(["message1", "message2", "message3"]);
+
+    ws.close(4001, "bye");
+    await new Promise((res) => ws.addEventListener("close", res));
+
+    await worker.terminate();
+  });
+
+  it("can upgrade many websockets at the same time, and identify them uniquely", async () => {
+    const webSocketScriptStr = fs.readFileSync(echoWebsocketFile, {
+      encoding: "utf-8",
+    });
+    const worker = await newDenoHTTPWorker(webSocketScriptStr, {
+      printOutput: false,
+    });
+
+    const ws1 = await worker.websocket("ws://localhost/echo");
+    const ws2 = await worker.websocket("ws://localhost/echo");
+
+    await new Promise<void>((res) => {
+      ws1.addEventListener("open", () => res());
+    });
+    await new Promise<void>((res) => {
+      ws2.addEventListener("open", () => res());
+    });
+
+    const ws1Messages: string[] = [];
+    const ws2Messages: string[] = [];
+
+    ws1.addEventListener("message", (event) => {
+      ws1Messages.push(event.data);
+    });
+    ws2.addEventListener("message", (event) => {
+      ws2Messages.push(event.data);
+    });
+
+    // Now we send 50 messages to each and make sure that they receive the correct ones
+    for (let i = 0; i < 50; i++) {
+      ws1.send(`ws1-message-${i}`);
+      ws2.send(`ws2-message-${i}`);
+    }
+
+    await new Promise((res) => setTimeout(res, 50));
+
+    expect(ws1Messages).toEqual(
+      Array.from({ length: 50 }, (_, i) => `ws1-message-${i}`)
+    );
+    expect(ws2Messages).toEqual(
+      Array.from({ length: 50 }, (_, i) => `ws2-message-${i}`)
+    );
+
+    await worker.terminate();
   });
 });

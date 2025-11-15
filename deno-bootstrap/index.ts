@@ -21,23 +21,43 @@ const onError = mod.default.onError ??
   });
 const onListen = mod.default.onListen ?? ((_localAddr: Deno.NetAddr) => {});
 
-// Use an empty onListen callback to prevent Deno from logging
+const originalRequestProp = Symbol("originalRequest");
+
+// We need to override Deno.upgradeWebSocket to use the original request object
+// since Deno doesn't let us use copied request objects.
+const originalUpgrade = Deno.upgradeWebSocket;
+Object.defineProperty(Deno, "upgradeWebSocket", {
+  value: (req: Request) => {
+    return originalUpgrade(
+      (req as unknown as { [originalRequestProp]: Request })[
+        originalRequestProp
+      ],
+    );
+  },
+});
+
 const server = Deno.serve(
   {
     path: socketFile,
+    // Use an empty onListen callback to prevent Deno from logging
     onListen: onListen,
     onError: onError,
   },
-  (req: Request) => {
-    const headerUrl = req.headers.get("X-Deno-Worker-URL");
+  (originalReq: Request) => {
+    const headerUrl = originalReq.headers.get("X-Deno-Worker-URL");
     if (!headerUrl) {
       // This is just for the warming request, shouldn't be seen by clients.
       return Response.json({ warming: true }, { status: 200 });
     }
-    const url = new URL(headerUrl);
+
     // Deno Request headers are immutable so we must make a new Request in order
     // to delete our headers.
-    req = new Request(url.toString(), req);
+    const req = new Request(headerUrl, originalReq);
+
+    // Add the original request so that we can use it during Deno.upgradeWebSocket
+    (req as unknown as { [originalRequestProp]: Request })[
+      originalRequestProp
+    ] = originalReq;
 
     // Restore host and connection headers.
     req.headers.delete("host");
@@ -51,21 +71,16 @@ const server = Deno.serve(
         req.headers.get("X-Deno-Worker-Connection")!,
       );
     }
-
     req.headers.delete("X-Deno-Worker-URL");
     req.headers.delete("X-Deno-Worker-Host");
     req.headers.delete("X-Deno-Worker-Connection");
+
     return mod.default.fetch(req);
   },
 );
 
-addEventListener("error", (e) => {
+globalThis.addEventListener("error", (e) => {
   console.error(e.error);
-  e.preventDefault();
-});
-
-addEventListener("unhandledrejection", (e) => {
-  console.error(e.reason);
   e.preventDefault();
 });
 
