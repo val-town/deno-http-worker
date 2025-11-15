@@ -50,7 +50,6 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   beforeAll(() => {
     // Clean up sockets that might have been left around during terminated test
     // runs.
-    // biome-ignore lint/complexity/noForEach: this is a test file
     fs.readdirSync(".").forEach((file) => {
       if (path.basename(file).endsWith("-deno-http.sock")) {
         fs.rmSync(file);
