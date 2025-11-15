@@ -29,7 +29,7 @@ export default async function (req: Request): Promise<Response> {
       }
       return handler(req);
     } catch (e) {
-      return new Response(e, { status: 500 });
+      return new Response(Deno.inspect(e), { status: 500 });
     }
   }
   return handler(req);
