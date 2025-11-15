@@ -182,7 +182,10 @@ export const newDenoHTTPWorker = async (
       ? _options.denoExecutable
       : (_options.denoExecutable[0] as string);
 
-  const bootstrap = await fs.readFile(_options.denoBootstrapScriptPath, "utf-8");
+  const bootstrap = await fs.readFile(
+    _options.denoBootstrapScriptPath,
+    "utf-8"
+  );
 
   return new Promise((resolve, reject) => {
     (async (): Promise<DenoHTTPWorker> => {
@@ -192,7 +195,7 @@ export const newDenoHTTPWorker = async (
           : _options.denoExecutable.slice(1)),
         "run",
         ..._options.runFlags,
-        "data:text/typescript," + encodeURIComponent(bootstrap),
+        `data:text/typescript,${encodeURIComponent(bootstrap)}`,
         ...scriptArgs,
       ];
       if (_options.printCommandAndArguments) {
@@ -202,7 +205,7 @@ export const newDenoHTTPWorker = async (
       const process = _options.spawnFunc(command, args, _options.spawnOptions);
       let running = false;
       let exited = false;
-      let worker: DenoHTTPWorker | undefined = undefined;
+      let worker: DenoHTTPWorker | undefined;
       process.on("exit", (code: number, signal: string) => {
         exited = true;
         if (!running) {
@@ -244,7 +247,7 @@ export const newDenoHTTPWorker = async (
           await fs.stat(socketFile);
           // File exists
           break;
-        } catch (err) {
+        } catch (_err) {
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
       }
@@ -399,7 +402,7 @@ class denoHTTPWorker {
     return this.#stderr;
   }
 
-  addEventListener(type: "exit", listener: OnExitListener): void {
+  addEventListener(_type: "exit", listener: OnExitListener): void {
     this.#onexitListeners.push(listener as OnExitListener);
   }
 }
