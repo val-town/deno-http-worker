@@ -1,16 +1,16 @@
 {
   "name": "@valtown/deno-http-worker",
-  "version": "0.0.21",
+  "version": "1.1.4",
   "description": "Securely spawn Deno workers from Node.js",
   "main": "dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "lint": "eslint . && npm run lint:deno-bootstrap && npm run lint:deno-test-files",
-    "lint:deno-bootstrap": "cd deno-bootstrap && deno lint",
-    "lint:deno-test-files": "cd src/test && deno lint",
-    "build": "tsc --build",
+    "lint": "biome check && eslint . && npm run lint:deno-bootstrap && npm run lint:deno-test-files",
+    "lint:deno-bootstrap": "cd deno-bootstrap && deno lint && deno fmt --check && deno check *.ts",
+    "lint:deno-test-files": "cd src/test && deno lint && deno fmt --check && deno check *.ts",
+    "build": "tsc --build tsconfig.build.json",
     "prepare": "npm run lint && npm run build"
   },
   "files": [
@@ -33,6 +33,7 @@
   "homepage": "https://github.com/val-town/deno-http-worker#readme",
   "devDependencies": {
     "@biomejs/biome": "^2.1.4",
+    "@changesets/cli": "^2.29.7",
     "@types/eslint": "^8.44.4",
     "@types/node": "^24.2.0",
     "@typescript-eslint/eslint-plugin": "^7.8.0",
@@ -40,5 +41,8 @@
     "eslint-plugin-import": "^2.29.1",
     "typescript": "^5.4.5",
     "vitest": "^3"
+  },
+  "dependencies": {
+    "undici": "^7.13.0"
   }
 }
