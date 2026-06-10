@@ -3,6 +3,8 @@ import { spawn, type SpawnOptions } from "node:child_process";
 import type { Readable } from "node:stream";
 import readline from "node:readline";
 import http from "node:http";
+import net from "node:net";
+import { type FSWatcher, watch } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 
@@ -128,11 +130,36 @@ export const newDenoHTTPWorker = async (
 
   let scriptArgs: string[];
 
-  // Create the socket location that we'll use to communicate with Deno.
-  const socketFile = path.join(
-    os.tmpdir(),
-    `${crypto.randomUUID()}-deno-http.sock`
+  if (
+    Array.isArray(_options.denoExecutable) &&
+    _options.denoExecutable.length === 0
+  ) {
+    throw new Error("denoExecutable must not be an empty array");
+  }
+  const command =
+    typeof _options.denoExecutable === "string"
+      ? _options.denoExecutable
+      : (_options.denoExecutable[0] as string);
+
+  const bootstrap = await fs.readFile(
+    _options.denoBootstrapScriptPath,
+    "utf-8"
   );
+
+  // Create the socket location that we'll use to communicate with Deno. The
+  // socket file gets a private directory (instead of living directly in
+  // os.tmpdir()) so that the fs.watch readiness detection below only receives
+  // events for this worker's socket. Watching the shared tmpdir would wake
+  // every pending worker's watcher for every temp file created by anything
+  // else on the machine. This directory is created last, after every other
+  // failable setup step above, so a setup error can't leak it; from here on,
+  // the process "exit" handler and worker._terminate() remove it.
+  const socketDir = await fs.mkdtemp(path.join(os.tmpdir(), "deno-http-"));
+  // The directory is already unique, so the socket file gets a short fixed
+  // name: unix socket paths are limited to ~104 bytes on macOS (SUN_LEN) and
+  // the old `${randomUUID()}-deno-http.sock` name plus the new directory
+  // component overflows that limit and makes Deno's listen() throw.
+  const socketFile = path.join(socketDir, "deno-http.sock");
 
   // If we have a file import, make sure we allow read access to the file.
   const allowReadFlagValue =
@@ -171,21 +198,6 @@ export const newDenoHTTPWorker = async (
   } else {
     scriptArgs = [socketFile, "import", script.href];
   }
-  if (
-    Array.isArray(_options.denoExecutable) &&
-    _options.denoExecutable.length === 0
-  ) {
-    throw new Error("denoExecutable must not be an empty array");
-  }
-  const command =
-    typeof _options.denoExecutable === "string"
-      ? _options.denoExecutable
-      : (_options.denoExecutable[0] as string);
-
-  const bootstrap = await fs.readFile(
-    _options.denoBootstrapScriptPath,
-    "utf-8"
-  );
 
   return new Promise((resolve, reject) => {
     (async (): Promise<DenoHTTPWorker> => {
@@ -220,7 +232,7 @@ export const newDenoHTTPWorker = async (
               signal
             )
           );
-          fs.rm(socketFile).catch(() => {});
+          fs.rm(socketDir, { recursive: true, force: true }).catch(() => {});
         } else {
           (worker as denoHTTPWorker)._terminate(code, signal);
         }
@@ -238,22 +250,131 @@ export const newDenoHTTPWorker = async (
         });
       }
 
-      // Wait for the socket file to be created by the Deno process.
+      // Wait for the socket file to be created by the Deno process, using a
+      // filesystem watcher on the private directory that will contain it.
+      try {
+        await new Promise<void>((ready, failed) => {
+          let settled = false;
+          let watcher: FSWatcher | undefined;
+          let fallbackPoll: NodeJS.Timeout | undefined;
+          // Every outcome must run through settle: an open FSWatcher (or a
+          // live interval) keeps the Node event loop alive, so leaking one on
+          // any path would hang the host process on shutdown.
+          const settle = (err?: Error) => {
+            if (settled) {
+              return;
+            }
+            settled = true;
+            watcher?.close();
+            clearInterval(fallbackPoll);
+            if (err) {
+              failed(err);
+            } else {
+              ready();
+            }
+          };
+          // A watch event only tells us that something happened in the
+          // directory, not that our socket exists: on Linux (inotify) file
+          // creation is reported as a "rename" event, on macOS
+          // (FSEvents/kqueue) event types vary, and the filename argument is
+          // not guaranteed to be provided on every platform. So we ignore
+          // both arguments and stat the socket file on every event.
+          const checkForSocketFile = () => {
+            fs.stat(socketFile).then(
+              () => settle(),
+              () => {
+                // Not there yet; keep waiting for the next event.
+              }
+            );
+          };
+          try {
+            watcher = watch(socketDir, checkForSocketFile);
+          } catch (err) {
+            settle(err as Error);
+            return;
+          }
+          // Without this, a watcher error (e.g. hitting the inotify watch or
+          // file-descriptor limit) would leave this promise pending forever.
+          watcher.on("error", (err) => settle(err));
+          // fs.watch gives us no signal when the Deno process dies before
+          // ever creating the socket, so wire the process exit to settle this
+          // wait too. The "exit" handler above has already rejected the outer
+          // promise with EarlyExitDenoHTTPWorkerError; the rejection from
+          // settle is harmlessly swallowed by that already-settled promise.
+          process.on("exit", () =>
+            settle(new Error("Deno exited before being ready"))
+          );
+          if (exited) {
+            // The process exited before the listener above was registered, so
+            // that listener will never fire; settle now.
+            settle(new Error("Deno exited before being ready"));
+            return;
+          }
+          // fs.watch is documented as not perfectly reliable, and on macOS
+          // the FSEvents stream starts asynchronously, so an event landing in
+          // the window right after watch() returns can be missed. A coarse
+          // fallback poll bounds the damage of any missed event at 250ms
+          // instead of hanging forever. (Yes: a robust fs.watch needs the
+          // poll it was supposed to replace, kept only as a safety net.)
+          fallbackPoll = setInterval(checkForSocketFile, 250);
+          // The socket file may also have been created in the window between
+          // spawn and the watcher being established, in which case no event
+          // will ever fire for it. Check once, now that the watcher is in
+          // place, so the file can't slip through unobserved.
+          checkForSocketFile();
+        });
+      } catch (err) {
+        if (!exited) {
+          // A watcher failure is an error path the poll/connect designs don't
+          // have: the Deno process is still alive and nothing else will reap
+          // it, so kill it before rejecting. The "exit" handler above then
+          // removes the socket directory.
+          process.kill("SIGKILL");
+        }
+        throw err;
+      }
+
+      // The socket file existing does not prove the socket is accepting
+      // connections: the file can appear before Deno's listen() has
+      // completed. Confirm with a connect attempt, retrying every 1ms until
+      // it succeeds. Note that this reintroduces a slice of the connect-retry
+      // loop from #120 — a watch event alone is not a sufficient readiness
+      // signal.
       for (;;) {
         if (exited) {
+          // The "exit" handler above has already rejected this promise with
+          // EarlyExitDenoHTTPWorkerError. Throw (harmlessly swallowed by the
+          // settled promise) instead of falling through and constructing a
+          // worker whose http.Agent would never be destroyed.
+          throw new Error("Deno exited before being ready");
+        }
+        const connected = await new Promise<boolean>((resolve) => {
+          const socket = net.connect({ path: socketFile });
+          socket.once("connect", () => {
+            socket.destroy();
+            resolve(true);
+          });
+          socket.once("error", () => {
+            socket.destroy();
+            resolve(false);
+          });
+        });
+        if (connected) {
           break;
         }
-        try {
-          await fs.stat(socketFile);
-          // File exists
-          break;
-        } catch (_err) {
-          await new Promise((resolve) => setTimeout(resolve, 20));
-        }
+        await new Promise((resolve) => setTimeout(resolve, 1));
       }
       worker = new denoHTTPWorker(socketFile, process, stdout, stderr);
       running = true;
-      await (worker as denoHTTPWorker).warmRequest();
+      try {
+        await (worker as denoHTTPWorker).warmRequest();
+      } catch (err) {
+        // Clean up the worker (destroying its http.Agent) if the warm
+        // request fails, e.g. because the process died right after the
+        // socket came up.
+        (worker as denoHTTPWorker)._terminate();
+        throw err;
+      }
 
       return worker;
     })()
@@ -327,7 +448,13 @@ class denoHTTPWorker {
       forceKill(this.#process.pid!);
     }
     this.#agent.destroy();
-    fs.rm(this.#socketFile).catch(() => {});
+    // The socket file lives in a private directory created by
+    // newDenoHTTPWorker (for the fs.watch readiness detection); remove the
+    // whole directory, not just the socket file.
+    fs.rm(path.dirname(this.#socketFile), {
+      recursive: true,
+      force: true,
+    }).catch(() => {});
     for (const onexit of this.#onexitListeners) {
       onexit(code ?? 1, signal ?? "");
     }
