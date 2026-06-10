@@ -3,6 +3,7 @@ import { spawn, type SpawnOptions } from "node:child_process";
 import type { Readable } from "node:stream";
 import readline from "node:readline";
 import http from "node:http";
+import net from "node:net";
 import fs from "node:fs/promises";
 import os from "node:os";
 
@@ -238,18 +239,29 @@ export const newDenoHTTPWorker = async (
         });
       }
 
-      // Wait for the socket file to be created by the Deno process.
+      // Wait for the Deno process to start listening on the socket. We retry a
+      // real connection rather than polling fs.stat: the socket file can exist
+      // before listen() finishes, and a 1ms connect retry detects readiness an
+      // order of magnitude sooner than a 20ms stat poll.
       for (;;) {
         if (exited) {
           break;
         }
-        try {
-          await fs.stat(socketFile);
-          // File exists
+        const connected = await new Promise<boolean>((resolve) => {
+          const socket = net.connect({ path: socketFile });
+          socket.once("connect", () => {
+            socket.destroy();
+            resolve(true);
+          });
+          socket.once("error", () => {
+            socket.destroy();
+            resolve(false);
+          });
+        });
+        if (connected) {
           break;
-        } catch (_err) {
-          await new Promise((resolve) => setTimeout(resolve, 20));
         }
+        await new Promise((resolve) => setTimeout(resolve, 1));
       }
       worker = new denoHTTPWorker(socketFile, process, stdout, stderr);
       running = true;
