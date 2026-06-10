@@ -239,10 +239,7 @@ export const newDenoHTTPWorker = async (
         });
       }
 
-      // Wait for the Deno process to start listening on the socket. We retry a
-      // real connection rather than polling fs.stat: the socket file can exist
-      // before listen() finishes, and a 1ms connect retry detects readiness an
-      // order of magnitude sooner than a 20ms stat poll.
+      // Try connecting to the Deno process every 1ms
       for (;;) {
         if (exited) {
           break;
