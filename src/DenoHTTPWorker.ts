@@ -242,7 +242,11 @@ export const newDenoHTTPWorker = async (
       // Try connecting to the Deno process every 1ms
       for (;;) {
         if (exited) {
-          break;
+          // The "exit" handler above has already rejected this promise with
+          // EarlyExitDenoHTTPWorkerError. Throw (harmlessly swallowed by the
+          // settled promise) instead of falling through and constructing a
+          // worker whose http.Agent would never be destroyed.
+          throw new Error("Deno exited before being ready");
         }
         const connected = await new Promise<boolean>((resolve) => {
           const socket = net.connect({ path: socketFile });
@@ -262,7 +266,15 @@ export const newDenoHTTPWorker = async (
       }
       worker = new denoHTTPWorker(socketFile, process, stdout, stderr);
       running = true;
-      await (worker as denoHTTPWorker).warmRequest();
+      try {
+        await (worker as denoHTTPWorker).warmRequest();
+      } catch (err) {
+        // Clean up the worker (destroying its http.Agent) if the warm
+        // request fails, e.g. because the process died right after the
+        // socket came up.
+        (worker as denoHTTPWorker)._terminate();
+        throw err;
+      }
 
       return worker;
     })()
