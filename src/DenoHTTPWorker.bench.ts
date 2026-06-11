@@ -9,7 +9,7 @@ const DEFAULT_HTTP_VAL = `export default { async fetch (req: Request): Promise<R
   return Response.json({ ok: req.url, headers: headers })
 } }`;
 
-const opts = { iterations: 20 };
+const opts = { iterations: 200 };
 
 describe("spawn", () => {
   bench(
@@ -40,12 +40,22 @@ describe("spawn", () => {
     },
     opts
   );
-
   bench(
-    "both",
+    "skip warm",
     async () => {
       const worker = await newDenoHTTPWorker(DEFAULT_HTTP_VAL, {
-        next: { cacheBootstrap: true, fastReady: true },
+        next: { skipWarm: true },
+      });
+      worker.terminate();
+    },
+    opts
+  );
+
+  bench(
+    "all",
+    async () => {
+      const worker = await newDenoHTTPWorker(DEFAULT_HTTP_VAL, {
+        next: { cacheBootstrap: true, fastReady: true, skipWarm: true },
       });
       worker.terminate();
     },

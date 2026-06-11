@@ -111,6 +111,7 @@ export interface DenoWorkerOptions {
   next?: {
     cacheBootstrap?: boolean;
     fastReady?: boolean;
+    skipWarm?: boolean;
   };
 }
 
@@ -301,7 +302,17 @@ export const newDenoHTTPWorker = async (
 
       worker = new denoHTTPWorker(socketFile, process, stdout, stderr);
       running = true;
-      await (worker as denoHTTPWorker).warmRequest();
+      if (!_options.next?.skipWarm) {
+        try {
+          await (worker as denoHTTPWorker).warmRequest();
+        } catch (err) {
+          // Clean up the worker (destroying its http.Agent) if the warmAdd a comment on  line R272Add diff commentMarkdown input:  edit mode selected.WritePreviewAdd a suggestionHeadingBoldItalicQuoteCodeLinkUnordered listNumbered listTask listMentionReferenceMore Formatting tools items 0Saved repliesAdd FilesPaste, drop, or click to add filesCancelCommentStart a review
+          // request fails, e.g. because the process died right after the
+          // socket came up.
+          (worker as denoHTTPWorker)._terminate();
+          throw err;
+        }
+      }
 
       return worker;
     })()
