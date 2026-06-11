@@ -66,11 +66,6 @@ addEventListener("error", (e) => {
   e.preventDefault();
 });
 
-addEventListener("unhandledrejection", (e) => {
-  console.error(e.reason);
-  e.preventDefault();
-});
-
 Deno.addSignalListener("SIGINT", async () => {
   // On interrupt we only shut down the server. Deno will wait for all
   // unresolved promises to complete before exiting.
