@@ -5,6 +5,7 @@ import readline from "node:readline";
 import http from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
+import net from "node:net";
 
 import { fileURLToPath } from "node:url";
 
@@ -106,7 +107,15 @@ export interface DenoWorkerOptions {
     args: string[],
     options: SpawnOptions
   ) => MinimalChildProcess;
+
+  next?: {
+    cacheBootstrap?: boolean;
+    fastReady?: boolean;
+    skipWarm?: boolean;
+  };
 }
+
+let bootstrapCache = new Map<string, string>();
 
 /**
  * Create a new DenoHTTPWorker. This function will start a worker and being
@@ -115,6 +124,7 @@ export const newDenoHTTPWorker = async (
   script: string | URL,
   options: Partial<DenoWorkerOptions> = {}
 ): Promise<DenoHTTPWorker> => {
+  // Synchronous work
   const _options: DenoWorkerOptions = {
     denoExecutable: "deno",
     denoBootstrapScriptPath: DEFAULT_DENO_BOOTSTRAP_SCRIPT_PATH,
@@ -182,10 +192,21 @@ export const newDenoHTTPWorker = async (
       ? _options.denoExecutable
       : (_options.denoExecutable[0] as string);
 
-  const bootstrap = await fs.readFile(
-    _options.denoBootstrapScriptPath,
-    "utf-8"
-  );
+  let bootstrap: string | undefined;
+  if (_options.next?.cacheBootstrap) {
+    bootstrap = bootstrapCache.get(_options.denoBootstrapScriptPath);
+
+    if (!bootstrap) {
+      bootstrap = encodeURIComponent(
+        await fs.readFile(_options.denoBootstrapScriptPath, "utf-8")
+      );
+      bootstrapCache.set(_options.denoBootstrapScriptPath, bootstrap);
+    }
+  } else {
+    bootstrap = encodeURIComponent(
+      await fs.readFile(_options.denoBootstrapScriptPath, "utf-8")
+    );
+  }
 
   return new Promise((resolve, reject) => {
     (async (): Promise<DenoHTTPWorker> => {
@@ -195,7 +216,7 @@ export const newDenoHTTPWorker = async (
           : _options.denoExecutable.slice(1)),
         "run",
         ..._options.runFlags,
-        `data:text/typescript,${encodeURIComponent(bootstrap)}`,
+        `data:text/typescript,${bootstrap}`,
         ...scriptArgs,
       ];
       if (_options.printCommandAndArguments) {
@@ -237,23 +258,61 @@ export const newDenoHTTPWorker = async (
           console.error("[deno]", line);
         });
       }
-
-      // Wait for the socket file to be created by the Deno process.
-      for (;;) {
-        if (exited) {
-          break;
+      if (_options.next?.fastReady) {
+        // Try connecting to the Deno process every 1ms
+        for (;;) {
+          if (exited) {
+            // The "exit" handler above has already rejected this promise with
+            // EarlyExitDenoHTTPWorkerError. Throw (harmlessly swallowed by the
+            // settled promise) instead of falling through and constructing a
+            // worker whose http.Agent would never be destroyed.
+            throw new Error("Deno exited before being ready");
+          }
+          const connected = await new Promise<boolean>((resolve) => {
+            const socket = net.connect({ path: socketFile });
+            socket.once("connect", () => {
+              socket.destroy();
+              resolve(true);
+            });
+            socket.once("error", () => {
+              socket.destroy();
+              resolve(false);
+            });
+          });
+          if (connected) {
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1));
         }
-        try {
-          await fs.stat(socketFile);
-          // File exists
-          break;
-        } catch (_err) {
-          await new Promise((resolve) => setTimeout(resolve, 20));
+      } else {
+        // Wait for the socket file to be created by the Deno process.
+        for (;;) {
+          if (exited) {
+            break;
+          }
+          try {
+            await fs.stat(socketFile);
+            // File exists
+            break;
+          } catch (_err) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
         }
       }
+
       worker = new denoHTTPWorker(socketFile, process, stdout, stderr);
       running = true;
-      await (worker as denoHTTPWorker).warmRequest();
+      if (!_options.next?.skipWarm) {
+        try {
+          await (worker as denoHTTPWorker).warmRequest();
+        } catch (err) {
+          // Clean up the worker (destroying its http.Agent) if the warmAdd a comment on  line R272Add diff commentMarkdown input:  edit mode selected.WritePreviewAdd a suggestionHeadingBoldItalicQuoteCodeLinkUnordered listNumbered listTask listMentionReferenceMore Formatting tools items 0Saved repliesAdd FilesPaste, drop, or click to add filesCancelCommentStart a review
+          // request fails, e.g. because the process died right after the
+          // socket came up.
+          (worker as denoHTTPWorker)._terminate();
+          throw err;
+        }
+      }
 
       return worker;
     })()
