@@ -35,7 +35,7 @@
     "@biomejs/biome": "^2.1.4",
     "@changesets/cli": "^2.31.0",
     "@types/node": "^24.2.0",
-    "typescript": "^5.4.5",
+    "typescript": "^6.0.0",
     "vitest": "^3"
   },
   "publishConfig": {
