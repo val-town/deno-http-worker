@@ -32,11 +32,11 @@
   },
   "homepage": "https://github.com/val-town/deno-http-worker#readme",
   "devDependencies": {
-    "@biomejs/biome": "^2.1.4",
+    "@biomejs/biome": "^2.4.16",
     "@changesets/cli": "^2.31.0",
     "@types/node": "^24.2.0",
-    "typescript": "^6.0.0",
-    "vitest": "^3"
+    "typescript": "^6.0.3",
+    "vitest": "^4"
   },
   "publishConfig": {
     "access": "public"
