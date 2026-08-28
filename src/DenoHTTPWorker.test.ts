@@ -231,6 +231,50 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
   });
 
   describe("runFlags editing", () => {
+    /**
+     * Spawn a real worker, capture the arguments that were passed to `deno
+     * run`, and terminate it. Returns the captured argument list.
+     */
+    const captureSpawnArgs = async (runFlags?: string[]) => {
+      let captured: string[] = [];
+      const worker = await newDenoHTTPWorker(echoScript, {
+        spawnFunc: (command: string, args: string[], options: SpawnOptions) => {
+          captured = args;
+          return spawn(command, args, options);
+        },
+        ...(runFlags ? { runFlags } : {}),
+      });
+      worker.terminate();
+      return captured;
+    };
+
+    it("adds a socket-scoped --allow-net grant when no net permission is given", async () => {
+      const args = await captureSpawnArgs();
+      expect(args.some((flag) => flag.startsWith("--allow-net=unix:"))).toBe(
+        true
+      );
+      expect(args).not.toContain("--allow-net");
+    });
+
+    it("appends the unix socket to a scoped --allow-net flag", async () => {
+      const args = await captureSpawnArgs(["--allow-net=example.com"]);
+      expect(
+        args.some((flag) => flag.startsWith("--allow-net=example.com,unix:"))
+      ).toBe(true);
+    });
+
+    it("leaves a bare --allow-net flag untouched", async () => {
+      const args = await captureSpawnArgs(["--allow-net"]);
+      expect(args.filter((flag) => flag.startsWith("--allow-net"))).toEqual([
+        "--allow-net",
+      ]);
+    });
+
+    it("does not add a net grant when --allow-all is given", async () => {
+      const args = await captureSpawnArgs(["--allow-all"]);
+      expect(args.some((flag) => flag.startsWith("--allow-net"))).toBe(false);
+    });
+
     it.each([
       "--allow-read",
       "--allow-write",
@@ -244,7 +288,7 @@ describe("DenoHTTPWorker", { timeout: 1000 }, () => {
         runFlags: [flag],
       });
       await jsonRequest(worker, "http://localhost");
-      await worker.terminate();
+      worker.terminate();
     });
   });
 

@@ -8,8 +8,8 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
-        node-version: [22.x, 24.x]
-        deno-version: [2.5.x]
+        node-version: [24.x]
+        deno-version: [2.9.6]
     runs-on: ${{ matrix.os }}
     env:
       CI: true
