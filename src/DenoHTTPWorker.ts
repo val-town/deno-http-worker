@@ -152,12 +152,16 @@ export const newDenoHTTPWorker = async (
 
   let allowReadFound = false;
   let allowWriteFound = false;
+  let allowNetFound = false;
   _options.runFlags = _options.runFlags.map((flag) => {
     if (flag === "--allow-read" || flag === "--allow-all") {
       allowReadFound = true;
     }
     if (flag === "--allow-write" || flag === "--allow-all") {
       allowWriteFound = true;
+    }
+    if (flag === "--allow-net" || flag === "--allow-all") {
+      allowNetFound = true;
     }
     if (flag.startsWith("--allow-read=")) {
       allowReadFound = true;
@@ -167,6 +171,12 @@ export const newDenoHTTPWorker = async (
       allowWriteFound = true;
       return (flag += `,${socketFile}`);
     }
+    if (flag.startsWith("--allow-net=")) {
+      allowNetFound = true;
+      // In Deno 2.9.x if you have --allow-net and are using a socket,
+      // you need to permit the socket too.
+      return (flag += `,unix:${socketFile}`);
+    }
     return flag;
   });
   if (!allowReadFound) {
@@ -174,6 +184,9 @@ export const newDenoHTTPWorker = async (
   }
   if (!allowWriteFound) {
     _options.runFlags.push(`--allow-write=${socketFile}`);
+  }
+  if (!allowNetFound) {
+    _options.runFlags.push(`--allow-net=unix:${socketFile}`);
   }
 
   if (typeof script === "string") {
