@@ -8,6 +8,7 @@ on:
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
   id-token: write
@@ -44,3 +45,10 @@ jobs:
         env:
           NPM_CONFIG_PROVENANCE: true
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # PRs pushed with GITHUB_TOKEN don't fire push events, so run CI by hand.
+      - name: Run CI on the release PR
+        if: steps.changesets.outputs.pullRequestNumber != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run ci.yaml --ref changeset-release/main
